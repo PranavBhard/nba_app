@@ -1,0 +1,63 @@
+===== NBA REGRESSION =====
+
+⭐ Team Efficiency + Pace Core
+offRtg_szn_avg
+defRtg_opponent_szn_avg
+pace_szn_avg
+pace_opponent_szn_avg
+eFG%_szn_avg
+TOV%_szn_avg
+ORB%_szn_avg
+
+⭐ Recent Form
+offRtg_last10
+pace_last10
+last5_points_avg
+
+⭐ Player Availability
+perWeighted_available
+top1PPG_available
+perLostFromInjuries
+top1PPG_diff
+startersPer_available
+
+⭐ Matchup Effects
+team_3PAr * opp_3P%Allowed
+team_rimFreq * opp_rimFG%Allowed
+projectedPace
+
+⭐ Situational
+restDays
+b2b
+
+# Offense (Season + Last 10)
+OffRtg
+OffRtg_last10
+eFG%
+TS%
+3PA_rate
+FTr (free throw rate)
+ORB%
+
+# Defense (Season + Last 10)
+DefRtg
+DefRtg_last10
+Opp eFG%
+Opp 3PA_rate
+Opp ORB%
+
+# Pace
+Pace
+Pace_last10
+PaceDiff
+
+# Player Impact
+top1PPG
+startersPPG
+perWeighted
+perLostFromInjuries
+
+# Context
+Rest days
+Travel
+HomeCourtBoost

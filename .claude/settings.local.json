@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3:*)",
+      "Bash(source venv/bin/activate)",
+      "Bash(PYTHONPATH=/Users/pranav/Documents/NBA/nba_app python3:*)",
+      "Bash(PYTHONPATH=/Users/pranav/Documents/NBA python:*)",
+      "Bash(source nba_app/venv/bin/activate:*)",
+      "Bash(python -m py_compile:*)",
+      "Bash(ls:*)",
+      "Bash(git init:*)"
+    ]
+  }
+}

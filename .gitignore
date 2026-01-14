@@ -1,0 +1,26 @@
+# Virtual environment
+venv/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# IDE
+.cursor/
+.vscode/
+.idea/
+
+# Specstory
+.specstory/
+
+# Environment variables
+.env
+
+# OS files
+.DS_Store
+
+# Logs
+*.log

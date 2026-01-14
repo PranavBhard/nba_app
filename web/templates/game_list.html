@@ -1,0 +1,1496 @@
+{% extends "base.html" %}
+
+{% block title %}NBA Games - {{ game_date }}{% endblock %}
+
+{% block content %}
+<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+    <div>
+        <h1>NBA Games</h1>
+        <p class="subtitle">Select a game to manage players and generate predictions</p>
+    </div>
+    <a href="/model-config" target="_blank" class="gear-icon" title="Model Configuration">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M12 15C13.6569 15 15 13.6569 15 12C15 10.3431 13.6569 9 12 9C10.3431 9 9 10.3431 9 12C9 13.6569 10.3431 15 12 15Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M19.4 15C19.2669 15.3016 19.2272 15.6362 19.286 15.9606C19.3448 16.285 19.4995 16.5843 19.73 16.82L19.79 16.88C19.976 17.0657 20.1235 17.2863 20.2241 17.5291C20.3248 17.7719 20.3766 18.0322 20.3766 18.295C20.3766 18.5578 20.3248 18.8181 20.2241 19.0609C20.1235 19.3037 19.976 19.5243 19.79 19.71C19.6043 19.896 19.3837 20.0435 19.1409 20.1441C18.8981 20.2448 18.6378 20.2966 18.375 20.2966C18.1122 20.2966 17.8519 20.2448 17.6091 20.1441C17.3663 20.0435 17.1457 19.896 16.96 19.71L16.9 19.65C16.6643 19.4195 16.365 19.2648 16.0406 19.206C15.7162 19.1472 15.3816 19.1869 15.08 19.32C14.7842 19.4468 14.532 19.6572 14.3543 19.9255C14.1766 20.1938 14.0813 20.5082 14.08 20.83V21C14.08 21.5304 13.8693 22.0391 13.4942 22.4142C13.1191 22.7893 12.6104 23 12.08 23C11.5496 23 11.0409 22.7893 10.6658 22.4142C10.2907 22.0391 10.08 21.5304 10.08 21V20.91C10.0723 20.579 9.96512 20.258 9.77251 19.9887C9.5799 19.7194 9.31074 19.5143 9 19.4C8.69838 19.2669 8.36381 19.2272 8.03941 19.286C7.71502 19.3448 7.41568 19.4995 7.18 19.73L7.12 19.79C6.93425 19.976 6.71368 20.1235 6.47088 20.2241C6.22808 20.3248 5.96783 20.3766 5.705 20.3766C5.44217 20.3766 5.18192 20.3248 4.93912 20.2241C4.69632 20.1235 4.47575 19.976 4.29 19.79C4.10405 19.6043 3.95653 19.3837 3.85588 19.1409C3.75523 18.8981 3.70343 18.6378 3.70343 18.375C3.70343 18.1122 3.75523 17.8519 3.85588 17.6091C3.95653 17.3663 4.10405 17.1457 4.29 16.96L4.35 16.9C4.58054 16.6643 4.73519 16.365 4.794 16.0406C4.85282 15.7162 4.81312 15.3816 4.68 15.08C4.55324 14.7842 4.34276 14.532 4.07447 14.3543C3.80618 14.1766 3.49179 14.0813 3.17 14.08H3C2.46957 14.08 1.96086 13.8693 1.58579 13.4942C1.21071 13.1191 1 12.6104 1 12.08C1 11.5496 1.21071 11.0409 1.58579 10.6658C1.96086 10.2907 2.46957 10.08 3 10.08H3.09C3.42099 10.0723 3.742 9.96512 4.01131 9.77251C4.28062 9.5799 4.48568 9.31074 4.6 9C4.73312 8.69838 4.77282 8.36381 4.714 8.03941C4.65519 7.71502 4.50054 7.41568 4.27 7.18L4.21 7.12C4.02405 6.93425 3.87653 6.71368 3.77588 6.47088C3.67523 6.22808 3.62343 5.96783 3.62343 5.705C3.62343 5.44217 3.67523 5.18192 3.77588 4.93912C3.87653 4.69632 4.02405 4.47575 4.21 4.29C4.39575 4.10405 4.61632 3.95653 4.85912 3.85588C5.10192 3.75523 5.36217 3.70343 5.625 3.70343C5.88783 3.70343 6.14808 3.75523 6.39088 3.85588C6.63368 3.95653 6.85425 4.10405 7.04 4.29L7.1 4.35C7.33568 4.58054 7.63502 4.73519 7.95941 4.794C8.28381 4.85282 8.61838 4.81312 8.92 4.68H9C9.29577 4.55324 9.54802 4.34276 9.72569 4.07447C9.90337 3.80618 9.99872 3.49179 10 3.17V3C10 2.46957 10.2107 1.96086 10.5858 1.58579C10.9609 1.21071 11.4696 1 12 1C12.5304 1 13.0391 1.21071 13.4142 1.58579C13.7893 1.96086 14 2.46957 14 3V3.09C14.0013 3.41179 14.0966 3.72618 14.2743 3.99447C14.452 4.26276 14.7042 4.47324 15 4.6C15.3016 4.73312 15.6362 4.77282 15.9606 4.714C16.285 4.65519 16.5843 4.50054 16.82 4.27L16.88 4.21C17.0657 4.02405 17.2863 3.87653 17.5291 3.77588C17.7719 3.67523 18.0322 3.62343 18.295 3.62343C18.5578 3.62343 18.8181 3.67523 19.0609 3.77588C19.3037 3.87653 19.5243 4.02405 19.71 4.21C19.896 4.39575 20.0435 4.61632 20.1441 4.85912C20.2448 5.10192 20.2966 5.36217 20.2966 5.625C20.2966 5.88783 20.2448 6.14808 20.1441 6.39088C20.0435 6.63368 19.896 6.85425 19.71 7.04L19.65 7.1C19.4195 7.33568 19.2648 7.63502 19.206 7.95941C19.1472 8.28381 19.1869 8.61838 19.32 8.92V9C19.4468 9.29577 19.6572 9.54802 19.9255 9.72569C20.1938 9.90337 20.5082 9.99872 20.83 10H21C21.5304 10 22.0391 10.2107 22.4142 10.5858C22.7893 10.9609 23 11.4696 23 12C23 12.5304 22.7893 13.0391 22.4142 13.4142C22.0391 13.7893 21.5304 14 21 14H20.91C20.5882 14.0013 20.2738 14.0966 20.0055 14.2743C19.7372 14.452 19.5268 14.7042 19.4 15Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+    </a>
+</div>
+
+<div class="date-selector">
+    <label for="game-date">Date:</label>
+    <input type="date" id="game-date" value="{{ game_date }}" />
+    <button onclick="goToDate()">Go</button>
+    <button onclick="goToDate('{{ prev_date }}')">← Previous</button>
+    <button onclick="goToDate('{{ next_date }}')">Next →</button>
+    <button class="run-predictions-btn" onclick="runAllPredictions()">Run Predictions</button>
+    <button class="pull-data-btn" onclick="pullGameData()" title="Pull game data from ESPN API">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" style="vertical-align: middle; margin-right: 4px;">
+            <path d="M8 2V14M8 14L3 9M8 14L13 9" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        Pull
+    </button>
+    <div class="pull-status" id="pull-status">
+        {{ games_pulled }}/{{ total_games }} Pulled
+    </div>
+    <div class="master-status" id="master-status">
+        {{ games_in_master }}/{{ total_games }} Added to Master
+    </div>
+</div>
+
+{% if games %}
+    <div class="games-grid">
+        {% for game in games %}
+        <div class="game-card" onclick="window.location.href='/game/{{ game.game_id }}?date={{ game_date }}'" data-game-id="{{ game.game_id }}" data-home-team="{{ game.home_team }}" data-away-team="{{ game.away_team }}" data-game-date="{{ game.date }}" data-home-logo="{{ game.home_team_logo or '' }}" data-away-logo="{{ game.away_team_logo or '' }}" data-home-color="{{ game.home_team_color }}" data-away-color="{{ game.away_team_color }}" data-home-points="{{ game.home_points if game.home_points is not none else '' }}" data-away-points="{{ game.away_points if game.away_points is not none else '' }}" data-pregame-lines="{{ game.pregame_lines|tojson|safe if game.pregame_lines else '{}' }}" data-last-prediction="{{ game.last_prediction|tojson|safe if game.last_prediction else '{}' }}" style="border-color: #{{ game.home_team_color }};">
+            <div class="game-card-icons">
+                <div class="game-card-info-icon" onclick="event.stopPropagation(); showGameFeatures('{{ game.game_id }}', '{{ game.date }}', '{{ game.home_team }}', '{{ game.away_team }}');" title="View feature values">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <circle cx="12" cy="12" r="10"></circle>
+                        <line x1="12" y1="16" x2="12" y2="12"></line>
+                        <line x1="12" y1="8" x2="12.01" y2="8"></line>
+                    </svg>
+                </div>
+                <div class="game-card-message-icon" onclick="event.stopPropagation(); openMatchupChat('{{ game.game_id }}', '{{ game.home_team }}', '{{ game.away_team }}', '{{ game.date }}');" title="Chat about matchup">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+                    </svg>
+                </div>
+            </div>
+            {% if game.gametime %}
+            <div class="game-time">{{ game.gametime|gametime_et }}</div>
+            {% endif %}
+            <div class="game-teams">
+                <div class="team-panel away">
+                    {% if game.away_team_logo %}
+                    <img src="{{ game.away_team_logo }}" alt="{{ game.away_team }} logo" class="team-logo-small">
+                    {% endif %}
+                    <div class="team-abbreviation" style="color: #{{ game.away_team_color }};">
+                        {{ game.away_team }}
+                        {% if game.pregame_lines and game.pregame_lines.get('away_ml') is not none %}
+                        <span class="moneyline">({{ "+" if game.pregame_lines['away_ml'] >= 0 else "" }}{{ game.pregame_lines['away_ml'] }})</span>
+                        {% endif %}
+                    </div>
+                    {% if game.away_points is not none %}
+                    <div class="team-score" style="color: #{{ game.away_team_color }};">
+                        {{ game.away_points }}
+                    </div>
+                    {% elif game.pregame_lines and game.pregame_lines.get('spread') is not none %}
+                    {% set away_spread = -game.pregame_lines['spread'] %}
+                    <div class="spread" style="color: #{{ game.away_team_color }};">
+                        {{ "+" if away_spread >= 0 else "" }}{{ "%.1f"|format(away_spread) }}
+                    </div>
+                    {% endif %}
+                    {% if game.last_prediction and game.last_prediction.get('away_win_prob') is not none %}
+                    <div class="prediction-banner">
+                        {{ "%.0f"|format(game.last_prediction['away_win_prob']) }}%
+                        {% if game.last_prediction.get('away_odds') is not none %}
+                        ({{ "+" if game.last_prediction['away_odds'] >= 0 else "" }}{{ "%.0f"|format(game.last_prediction['away_odds']) }})
+                        {% endif %}
+                    </div>
+                    {% endif %}
+                    {% if game.last_prediction and game.last_prediction.get('away_points_pred') is not none %}
+                    <div class="points-prediction">
+                        {{ "%.0f"|format(game.last_prediction['away_points_pred']) }} pts
+                    </div>
+                    {% endif %}
+                    {% if game.away_injured_players and game.away_injured_players|length > 0 %}
+                    <div class="injured-players">
+                        {{ game.away_injured_players|join(', ') }}
+                    </div>
+                    {% endif %}
+                </div>
+                <div class="vs">@</div>
+                <div class="team-panel home">
+                    {% if game.home_team_logo %}
+                    <img src="{{ game.home_team_logo }}" alt="{{ game.home_team }} logo" class="team-logo-small">
+                    {% endif %}
+                    <div class="team-abbreviation" style="color: #{{ game.home_team_color }};">
+                        {{ game.home_team }}
+                        {% if game.pregame_lines and game.pregame_lines.get('home_ml') is not none %}
+                        <span class="moneyline">({{ "+" if game.pregame_lines['home_ml'] >= 0 else "" }}{{ game.pregame_lines['home_ml'] }})</span>
+                        {% endif %}
+                    </div>
+                    {% if game.home_points is not none %}
+                    <div class="team-score" style="color: #{{ game.home_team_color }};">
+                        {{ game.home_points }}
+                    </div>
+                    {% elif game.pregame_lines and game.pregame_lines.get('spread') is not none %}
+                    <div class="spread" style="color: #{{ game.home_team_color }};">
+                        {{ "%.1f"|format(game.pregame_lines['spread']) }}
+                    </div>
+                    {% endif %}
+                    {% if game.last_prediction and game.last_prediction.get('home_win_prob') is not none %}
+                    <div class="prediction-banner">
+                        {{ "%.0f"|format(game.last_prediction['home_win_prob']) }}%
+                        {% if game.last_prediction.get('home_odds') is not none %}
+                        ({{ "+" if game.last_prediction['home_odds'] >= 0 else "" }}{{ "%.0f"|format(game.last_prediction['home_odds']) }})
+                        {% endif %}
+                    </div>
+                    {% endif %}
+                    {% if game.last_prediction and game.last_prediction.get('home_points_pred') is not none %}
+                    <div class="points-prediction">
+                        {{ "%.0f"|format(game.last_prediction['home_points_pred']) }} pts
+                    </div>
+                    {% endif %}
+                    {% if game.home_injured_players and game.home_injured_players|length > 0 %}
+                    <div class="injured-players">
+                        {{ game.home_injured_players|join(', ') }}
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+            <div class="game-date">{{ game.date }}</div>
+        </div>
+        {% endfor %}
+    </div>
+{% else %}
+    <div class="no-games">
+        <p>No games scheduled for {{ game_date }}</p>
+    </div>
+{% endif %}
+
+<style>
+    .games-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+        gap: 20px;
+        margin-top: 20px;
+    }
+    
+    .game-card {
+        border: 2px solid #ddd;
+        border-radius: 8px;
+        padding: 20px;
+        cursor: pointer;
+        transition: all 0.3s;
+        background: #f9f9f9;
+    }
+    
+    .game-card:hover {
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+        transform: translateY(-2px);
+    }
+    
+    .game-teams {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 15px;
+        margin-bottom: 10px;
+    }
+    
+    .team-panel {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 6px;
+        flex: 1;
+    }
+    
+    .team-logo-small {
+        width: 50px;
+        height: 50px;
+        object-fit: contain;
+    }
+    
+    .team-abbreviation {
+        font-size: 1.2em;
+        font-weight: bold;
+        text-align: center;
+    }
+    
+    .moneyline {
+        font-size: 0.85em;
+        font-weight: normal;
+        opacity: 0.8;
+    }
+    
+    .spread {
+        font-size: 0.9em;
+        font-weight: 600;
+        text-align: center;
+    }
+    
+    .team-score {
+        font-size: 1.5em;
+        font-weight: bold;
+        text-align: center;
+        margin-top: 4px;
+    }
+    
+    .prediction-banner {
+        font-size: 0.85em;
+        font-weight: 600;
+        color: #667eea;
+        background: rgba(102, 126, 234, 0.15);
+        padding: 4px 8px;
+        border-radius: 4px;
+        text-align: center;
+        margin-top: 2px;
+    }
+    
+    .points-prediction {
+        font-size: 0.9em;
+        font-weight: 600;
+        color: #28a745;
+        background: rgba(40, 167, 69, 0.15);
+        padding: 4px 8px;
+        border-radius: 4px;
+        text-align: center;
+        margin-top: 4px;
+    }
+    
+    .injured-players {
+        font-size: 0.7em;
+        color: #dc3545;
+        text-align: center;
+        margin-top: 4px;
+        opacity: 0.8;
+        line-height: 1.3;
+    }
+    
+    .vs {
+        font-size: 1.2em;
+        color: #999;
+        margin: 0 10px;
+        font-weight: bold;
+    }
+    
+    .game-time {
+        text-align: center;
+        color: #333;
+        font-size: 1em;
+        font-weight: 600;
+        margin-bottom: 10px;
+        padding-bottom: 8px;
+        border-bottom: 1px solid #e0e0e0;
+    }
+    
+    .game-date {
+        text-align: center;
+        color: #666;
+        font-size: 0.9em;
+        margin-top: 10px;
+    }
+    
+    .no-games {
+        text-align: center;
+        padding: 60px 20px;
+        color: #666;
+        font-size: 1.2em;
+    }
+    
+    .gear-icon {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 40px;
+        height: 40px;
+        color: #667eea;
+        text-decoration: none;
+        border-radius: 50%;
+        transition: all 0.2s;
+        background: rgba(102, 126, 234, 0.1);
+    }
+    
+    .gear-icon:hover {
+        background: rgba(102, 126, 234, 0.2);
+        transform: rotate(90deg);
+    }
+    
+    .run-predictions-btn {
+        background: #667eea;
+        color: white;
+        border: none;
+        padding: 8px 16px;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 14px;
+        margin-left: 10px;
+        transition: background 0.2s;
+    }
+    
+    .run-predictions-btn:hover {
+        background: #5568d3;
+    }
+    
+    .run-predictions-btn:disabled {
+        background: #ccc;
+        cursor: not-allowed;
+    }
+    
+    .pull-data-btn {
+        background: #28a745;
+        color: white;
+        border: none;
+        padding: 8px 16px;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 14px;
+        margin-left: 10px;
+        transition: background 0.2s;
+        display: inline-flex;
+        align-items: center;
+    }
+    
+    .pull-data-btn:hover {
+        background: #218838;
+    }
+    
+    .pull-data-btn:disabled {
+        background: #ccc;
+        cursor: not-allowed;
+    }
+    
+    .pull-status {
+        display: inline-block;
+        margin-left: 10px;
+        font-size: 14px;
+        color: #666;
+        font-weight: 600;
+    }
+    
+    .master-status {
+        display: inline-block;
+        margin-left: 10px;
+        font-size: 14px;
+        color: #667eea;
+        font-weight: 600;
+    }
+</style>
+
+<script>
+    function goToDate(dateStr) {
+        if (!dateStr) {
+            dateStr = document.getElementById('game-date').value;
+        }
+        window.location.href = '/?date=' + dateStr;
+    }
+    
+    document.getElementById('game-date').addEventListener('change', function() {
+        goToDate();
+    });
+    
+    async function runAllPredictions() {
+        const btn = document.querySelector('.run-predictions-btn');
+        const dateStr = document.getElementById('game-date').value;
+        
+        if (!dateStr) {
+            alert('Please select a date first');
+            return;
+        }
+        
+        // Disable button and show loading state
+        btn.disabled = true;
+        btn.textContent = 'Running Predictions...';
+        
+        try {
+            const response = await fetch('/api/predict-all', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ date: dateStr })
+            });
+            
+            const data = await response.json();
+            
+            if (!response.ok || !data.success) {
+                throw new Error(data.error || 'Failed to run predictions');
+            }
+            
+            // Update UI with predictions
+            updateGameCardsWithPredictions(data.results);
+            
+            // Show success message
+            alert(`Successfully generated predictions for ${data.successful} out of ${data.total_games} games${data.failed > 0 ? ` (${data.failed} failed)` : ''}`);
+            
+            // Reload page to show updated predictions
+            window.location.reload();
+            
+        } catch (error) {
+            console.error('Error running predictions:', error);
+            alert('Error running predictions: ' + error.message);
+        } finally {
+            btn.disabled = false;
+            btn.textContent = 'Run Predictions';
+        }
+    }
+    
+    async function pullGameData() {
+        const btn = document.querySelector('.pull-data-btn');
+        const statusDiv = document.getElementById('pull-status');
+        const dateStr = document.getElementById('game-date').value;
+        
+        if (!dateStr) {
+            alert('Please select a date first');
+            return;
+        }
+        
+        // Disable button and show loading state
+        btn.disabled = true;
+        const originalText = btn.innerHTML;
+        btn.innerHTML = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" style="vertical-align: middle; margin-right: 4px;"><path d="M8 2V14M8 14L3 9M8 14L13 9" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg> Pulling...';
+        
+        try {
+            const response = await fetch('/api/pull-game-data', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ date: dateStr })
+            });
+            
+            const data = await response.json();
+            
+            if (!response.ok || !data.success) {
+                throw new Error(data.error || 'Failed to pull game data');
+            }
+            
+            // Update status
+            if (data.games_pulled !== undefined && data.total_games !== undefined) {
+                statusDiv.textContent = `${data.games_pulled}/${data.total_games} Pulled`;
+            }
+            
+            // Update master status
+            const masterStatusDiv = document.getElementById('master-status');
+            if (masterStatusDiv && data.games_in_master !== undefined && data.total_games !== undefined) {
+                masterStatusDiv.textContent = `${data.games_in_master}/${data.total_games} Added to Master`;
+            }
+            
+            // Show success message
+            alert(`Successfully pulled data for ${data.games_processed || 0} game(s)`);
+            
+            // Reload page to show updated data
+            window.location.reload();
+            
+        } catch (error) {
+            console.error('Error pulling game data:', error);
+            alert('Error pulling game data: ' + error.message);
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = originalText;
+        }
+    }
+    
+    function updateGameCardsWithPredictions(predictions) {
+        predictions.forEach(result => {
+            const gameCard = document.querySelector(`[data-game-id="${result.game_id}"]`);
+            if (!gameCard) return;
+            
+            const pred = result.prediction;
+            const awayTeam = gameCard.querySelector('.team-panel.away');
+            const homeTeam = gameCard.querySelector('.team-panel.home');
+            
+            if (!awayTeam || !homeTeam) return;
+            
+            // Remove existing badges
+            awayTeam.querySelectorAll('.prediction-banner, .points-prediction').forEach(badge => badge.remove());
+            homeTeam.querySelectorAll('.prediction-banner, .points-prediction').forEach(badge => badge.remove());
+            
+            // Add new win probability badges
+            if (pred && pred.away_win_prob !== undefined && pred.away_win_prob !== null) {
+                const awayBadge = document.createElement('div');
+                awayBadge.className = 'prediction-banner';
+                awayBadge.textContent = `${Math.round(pred.away_win_prob)}%${pred.away_odds !== undefined && pred.away_odds !== null ? ` (${pred.away_odds >= 0 ? '+' : ''}${Math.round(pred.away_odds)})` : ''}`;
+                awayTeam.appendChild(awayBadge);
+            }
+            
+            if (pred && pred.home_win_prob !== undefined && pred.home_win_prob !== null) {
+                const homeBadge = document.createElement('div');
+                homeBadge.className = 'prediction-banner';
+                homeBadge.textContent = `${Math.round(pred.home_win_prob)}%${pred.home_odds !== undefined && pred.home_odds !== null ? ` (${pred.home_odds >= 0 ? '+' : ''}${Math.round(pred.home_odds)})` : ''}`;
+                homeTeam.appendChild(homeBadge);
+            }
+            
+            // Add points prediction badges
+            if (pred && pred.away_points_pred !== undefined && pred.away_points_pred !== null) {
+                const awayPointsBadge = document.createElement('div');
+                awayPointsBadge.className = 'points-prediction';
+                awayPointsBadge.textContent = `${Math.round(pred.away_points_pred)} pts`;
+                awayTeam.appendChild(awayPointsBadge);
+            }
+            
+            if (pred && pred.home_points_pred !== undefined && pred.home_points_pred !== null) {
+                const homePointsBadge = document.createElement('div');
+                homePointsBadge.className = 'points-prediction';
+                homePointsBadge.textContent = `${Math.round(pred.home_points_pred)} pts`;
+                homeTeam.appendChild(homePointsBadge);
+            }
+        });
+    }
+    
+    // Feature values modal
+    function showGameFeatures(gameId, gameDate, homeTeam, awayTeam) {
+        // Show loading state
+        const modal = document.getElementById('features-modal');
+        const modalContent = document.getElementById('features-modal-content');
+        modal.style.display = 'flex';
+        modalContent.innerHTML = '<div style="text-align: center; padding: 40px;"><div class="spinner"></div><p>Loading feature values...</p></div>';
+        
+        // Fetch feature values
+        fetch('/api/game-features', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                game_id: gameId,
+                game_date: gameDate,
+                home_team: homeTeam,
+                away_team: awayTeam
+            })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (!data.success) {
+                modalContent.innerHTML = `<div style="padding: 20px; color: #d32f2f;"><p>Error: ${data.error || 'Failed to load features'}</p></div>`;
+                return;
+            }
+            
+            // Build modal content
+            let html = `
+                <div class="features-modal-header">
+                    <h2>Feature Values</h2>
+                    <button class="close-modal" onclick="closeFeaturesModal()">&times;</button>
+                </div>
+                <div class="features-modal-body">
+                    <div class="game-info">
+                        <strong>${data.away_team} @ ${data.home_team}</strong><br>
+                        <small>${data.game_date} | ${data.total_features} features</small>
+                    </div>
+            `;
+            
+            // Category descriptions
+            const categoryDescriptions = {
+                'outcome_strength': 'Outcome Strength',
+                'shooting_efficiency': 'Shooting Efficiency',
+                'offensive_engine': 'Offensive Engine',
+                'defensive_engine': 'Defensive Engine',
+                'pace_volatility': 'Pace & Volatility',
+                'schedule_fatigue': 'Schedule & Fatigue',
+                'sample_size': 'Sample Size',
+                'elo_strength': 'Elo Strength',
+                'era_normalization': 'Era Normalization',
+                'player_talent': 'Player Talent',
+                'absolute_magnitude': 'Absolute Magnitude',
+                'injuries': 'Injuries',
+                'point_predictions': 'Point Predictions'
+            };
+            
+            // Display features by category
+            for (const [category, features] of Object.entries(data.feature_categories)) {
+                if (features.length === 0) continue;
+                
+                html += `
+                    <div class="feature-category">
+                        <h3>${categoryDescriptions[category] || category}</h3>
+                        <table class="features-table">
+                            <thead>
+                                <tr>
+                                    <th>Feature</th>
+                                    <th>Value</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                `;
+                
+                features.forEach(f => {
+                    const value = typeof f.value === 'number' ? f.value.toFixed(4) : f.value;
+                    html += `
+                        <tr>
+                            <td class="feature-name">${f.name}</td>
+                            <td class="feature-value">${value}</td>
+                        </tr>
+                    `;
+                });
+                
+                html += `
+                            </tbody>
+                        </table>
+                    </div>
+                `;
+            }
+            
+            // Add injured players section
+            if (data.home_injured_players && data.home_injured_players.length > 0 || 
+                data.away_injured_players && data.away_injured_players.length > 0) {
+                html += `
+                    <div class="feature-category">
+                        <h3>Injured Players</h3>
+                        <div style="padding: 10px;">
+                `;
+                if (data.home_injured_players && data.home_injured_players.length > 0) {
+                    html += `
+                        <div style="margin-bottom: 10px;">
+                            <strong>${data.home_team}:</strong> ${data.home_injured_players.join(', ')}
+                        </div>
+                    `;
+                }
+                if (data.away_injured_players && data.away_injured_players.length > 0) {
+                    html += `
+                        <div>
+                            <strong>${data.away_team}:</strong> ${data.away_injured_players.join(', ')}
+                        </div>
+                    `;
+                }
+                html += `
+                        </div>
+                    </div>
+                `;
+            }
+            
+            // Add player lists section for player-level features
+            if (data.feature_players && Object.keys(data.feature_players).length > 0) {
+                html += `
+                    <div class="feature-category">
+                        <h3>Players Involved in Feature Calculations</h3>
+                        <div style="padding: 10px;">
+                `;
+                
+                // Group PER features by type
+                const perFeatureGroups = {
+                    'player_team_per|season|avg': 'Team PER Average',
+                    'player_team_per|season|weighted_MPG': 'Team PER Weighted (MPG)',
+                    'player_starters_per|season|avg': 'Starters PER Average',
+                    'player_per_1|season|top1_avg': 'Top Player PER (1st)',
+                    'player_per_2|season|top1_avg': 'Top Player PER (2nd)',
+                    'player_per_3|season|top1_avg': 'Top Player PER (3rd)'
+                };
+                
+                for (const [featureBase, featureLabel] of Object.entries(perFeatureGroups)) {
+                    const homeFeature = `${featureBase}|home`;
+                    const awayFeature = `${featureBase}|away`;
+                    
+                    const homePlayers = data.feature_players[homeFeature] || [];
+                    const awayPlayers = data.feature_players[awayFeature] || [];
+                    
+                    if (homePlayers.length > 0 || awayPlayers.length > 0) {
+                        html += `
+                            <div style="margin-bottom: 20px; border-bottom: 1px solid #e0e0e0; padding-bottom: 15px;">
+                                <h4 style="margin-bottom: 10px; color: #1976d2;">${featureLabel}</h4>
+                        `;
+                        
+                        if (homePlayers.length > 0) {
+                            html += `
+                                <div style="margin-bottom: 10px;">
+                                    <strong>${data.home_team}:</strong>
+                                    <ul style="margin: 5px 0; padding-left: 20px;">
+                            `;
+                            homePlayers.forEach(player => {
+                                const perStr = player.per !== undefined ? ` (PER: ${player.per.toFixed(2)})` : '';
+                                const mpgStr = player.mpg !== undefined ? ` (MPG: ${player.mpg.toFixed(1)})` : '';
+                                html += `<li>${player.player_name || player.player_id}${perStr}${mpgStr}</li>`;
+                            });
+                            html += `
+                                    </ul>
+                                </div>
+                            `;
+                        }
+                        
+                        if (awayPlayers.length > 0) {
+                            html += `
+                                <div>
+                                    <strong>${data.away_team}:</strong>
+                                    <ul style="margin: 5px 0; padding-left: 20px;">
+                            `;
+                            awayPlayers.forEach(player => {
+                                const perStr = player.per !== undefined ? ` (PER: ${player.per.toFixed(2)})` : '';
+                                const mpgStr = player.mpg !== undefined ? ` (MPG: ${player.mpg.toFixed(1)})` : '';
+                                html += `<li>${player.player_name || player.player_id}${perStr}${mpgStr}</li>`;
+                            });
+                            html += `
+                                    </ul>
+                                </div>
+                            `;
+                        }
+                        
+                        html += `</div>`;
+                    }
+                }
+                
+                // Group injury features by type
+                const injuryFeatureGroups = {
+                    'inj_per|none|weighted_MIN': 'Injury PER Value (Weighted)',
+                    'inj_per|none|top1_avg': 'Injury Top 1 PER',
+                    'inj_per|none|top3_sum': 'Injury Top 3 PER Sum',
+                    'inj_min_lost|none|raw': 'Injury Minutes Lost',
+                    'inj_rotation_per|none|raw': 'Injury Rotation Count'
+                };
+                
+                // Also support old format feature names
+                for (const [featureBase, featureLabel] of Object.entries(injuryFeatureGroups)) {
+                    const homeFeature = `${featureBase}|home`;
+                    const awayFeature = `${featureBase}|away`;
+                    
+                    // Use new format only
+                    const homePlayers = data.feature_players[homeFeature] || [];
+                    const awayPlayers = data.feature_players[awayFeature] || [];
+                    
+                    if (homePlayers.length > 0 || awayPlayers.length > 0) {
+                        html += `
+                            <div style="margin-bottom: 20px; border-bottom: 1px solid #e0e0e0; padding-bottom: 15px;">
+                                <h4 style="margin-bottom: 10px; color: #d32f2f;">${featureLabel}</h4>
+                        `;
+                        
+                        if (homePlayers.length > 0) {
+                            html += `
+                                <div style="margin-bottom: 10px;">
+                                    <strong>${data.home_team}:</strong>
+                                    <ul style="margin: 5px 0; padding-left: 20px;">
+                            `;
+                            homePlayers.forEach(player => {
+                                const perStr = player.per !== undefined ? ` (PER: ${player.per.toFixed(2)})` : '';
+                                const mpgStr = player.mpg !== undefined ? ` (MPG: ${player.mpg.toFixed(1)})` : '';
+                                const weightedPerStr = player.weighted_per !== undefined ? ` (Weighted PER: ${player.weighted_per.toFixed(2)})` : '';
+                                html += `<li>${player.player_name || player.player_id}${perStr}${mpgStr}${weightedPerStr}</li>`;
+                            });
+                            html += `
+                                    </ul>
+                                </div>
+                            `;
+                        }
+                        
+                        if (awayPlayers.length > 0) {
+                            html += `
+                                <div>
+                                    <strong>${data.away_team}:</strong>
+                                    <ul style="margin: 5px 0; padding-left: 20px;">
+                            `;
+                            awayPlayers.forEach(player => {
+                                const perStr = player.per !== undefined ? ` (PER: ${player.per.toFixed(2)})` : '';
+                                const mpgStr = player.mpg !== undefined ? ` (MPG: ${player.mpg.toFixed(1)})` : '';
+                                const weightedPerStr = player.weighted_per !== undefined ? ` (Weighted PER: ${player.weighted_per.toFixed(2)})` : '';
+                                html += `<li>${player.player_name || player.player_id}${perStr}${mpgStr}${weightedPerStr}</li>`;
+                            });
+                            html += `
+                                    </ul>
+                                </div>
+                            `;
+                        }
+                        
+                        html += `</div>`;
+                    }
+                }
+                
+                html += `
+                        </div>
+                    </div>
+                `;
+            }
+            
+            html += '</div>';
+            modalContent.innerHTML = html;
+        })
+        .catch(error => {
+            console.error('Error loading features:', error);
+            modalContent.innerHTML = `<div style="padding: 20px; color: #d32f2f;"><p>Error loading features: ${error.message}</p></div>`;
+        });
+    }
+    
+    function closeFeaturesModal() {
+        document.getElementById('features-modal').style.display = 'none';
+    }
+    
+    // Close modal when clicking outside
+    window.onclick = function(event) {
+        const modal = document.getElementById('features-modal');
+        if (event.target === modal) {
+            closeFeaturesModal();
+        }
+    }
+</script>
+
+<!-- Features Modal -->
+<div id="features-modal" class="features-modal" style="display: none;">
+    <div id="features-modal-content" class="features-modal-content"></div>
+</div>
+
+<!-- Matchup Chat Modal -->
+{% include 'matchup_chat_modal.html' %}
+
+<script>
+// Matchup Chat Functions
+let matchupChatSessionId = null;
+
+async function openMatchupChat(gameId, homeTeam, awayTeam, gameDate) {
+    try {
+        // Get game info from the game card element
+        let gameInfo = {
+            home_team: homeTeam,
+            away_team: awayTeam,
+            date: gameDate,
+            game_id: gameId
+        };
+        
+        // Try to extract game details from the game card element
+        try {
+            const gameCard = document.querySelector(`[data-game-id="${gameId}"]`);
+            if (gameCard) {
+                gameInfo.home_team_logo = gameCard.getAttribute('data-home-logo') || '';
+                gameInfo.away_team_logo = gameCard.getAttribute('data-away-logo') || '';
+                gameInfo.home_team_color = gameCard.getAttribute('data-home-color') || '667eea';
+                gameInfo.away_team_color = gameCard.getAttribute('data-away-color') || '666666';
+                const homePoints = gameCard.getAttribute('data-home-points');
+                const awayPoints = gameCard.getAttribute('data-away-points');
+                gameInfo.home_points = homePoints ? parseInt(homePoints) : null;
+                gameInfo.away_points = awayPoints ? parseInt(awayPoints) : null;
+                
+                // Parse pregame_lines and last_prediction
+                try {
+                    const pregameLinesStr = gameCard.getAttribute('data-pregame-lines');
+                    if (pregameLinesStr) {
+                        gameInfo.pregame_lines = JSON.parse(pregameLinesStr);
+                    }
+                } catch (e) {
+                    gameInfo.pregame_lines = {};
+                }
+                
+                try {
+                    const lastPredictionStr = gameCard.getAttribute('data-last-prediction');
+                    if (lastPredictionStr) {
+                        gameInfo.last_prediction = JSON.parse(lastPredictionStr);
+                    }
+                } catch (e) {
+                    gameInfo.last_prediction = {};
+                }
+            }
+        } catch (e) {
+            console.log('Could not get game card info:', e);
+        }
+        
+        // Create or get session
+        const sessionResponse = await fetch('/api/matchup-chat/sessions', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                game_id: gameId,
+                home_team: homeTeam,
+                away_team: awayTeam,
+                game_date: gameDate
+            })
+        });
+        
+        if (!sessionResponse.ok) {
+            const errorData = await sessionResponse.json().catch(() => ({ error: 'Failed to create session' }));
+            alert(`Error: ${errorData.error || 'Failed to create chat session'}`);
+            return;
+        }
+        
+        const sessionData = await sessionResponse.json();
+        matchupChatSessionId = sessionData.session_id;
+        
+        // Update game card in header
+        updateMatchupChatGameCard(gameInfo || { home_team: homeTeam, away_team: awayTeam, date: gameDate });
+        
+        // Load existing messages
+        await loadMatchupChatMessages();
+        
+        // Show modal
+        const modal = document.getElementById('matchupChatModal');
+        if (modal) {
+            modal.style.display = 'flex';
+            // Focus input
+            const input = document.getElementById('matchupChatInput');
+            if (input) {
+                setTimeout(() => input.focus(), 100);
+            }
+        }
+    } catch (error) {
+        console.error('Error opening matchup chat:', error);
+        alert(`Error: ${error.message}`);
+    }
+}
+
+function updateMatchupChatGameCard(game) {
+    const gameCardEl = document.getElementById('matchupChatGameCard');
+    if (!gameCardEl) return;
+    
+    const homeTeam = game.home_team || game.homeTeam?.name || '';
+    const awayTeam = game.away_team || game.awayTeam?.name || '';
+    const gameDate = game.date || '';
+    const homeLogo = game.home_team_logo || '';
+    const awayLogo = game.away_team_logo || '';
+    const homeColor = game.home_team_color || '667eea';
+    const awayColor = game.away_team_color || '666666';
+    const pregameLines = game.pregame_lines || {};
+    const lastPrediction = game.last_prediction || {};
+    const homePoints = game.home_points || game.homeTeam?.points;
+    const awayPoints = game.away_points || game.awayTeam?.points;
+    
+    let html = '<div class="game-teams">';
+    
+    // Away team
+    html += '<div class="team-panel away">';
+    if (awayLogo) {
+        html += `<img src="${awayLogo}" alt="${awayTeam} logo" class="team-logo-small">`;
+    }
+    html += `<div class="team-abbreviation" style="color: #${awayColor};">${awayTeam}`;
+    if (pregameLines.away_ml !== undefined && pregameLines.away_ml !== null) {
+        html += `<span class="moneyline">(${pregameLines.away_ml >= 0 ? '+' : ''}${pregameLines.away_ml})</span>`;
+    }
+    html += '</div>';
+    if (awayPoints !== undefined && awayPoints !== null) {
+        html += `<div class="team-score" style="color: #${awayColor};">${awayPoints}</div>`;
+    } else if (pregameLines.spread !== undefined && pregameLines.spread !== null) {
+        const awaySpread = -pregameLines.spread;
+        html += `<div class="spread" style="color: #${awayColor};">${awaySpread >= 0 ? '+' : ''}${awaySpread.toFixed(1)}</div>`;
+    }
+    if (lastPrediction.away_win_prob !== undefined && lastPrediction.away_win_prob !== null) {
+        html += `<div class="prediction-banner">${Math.round(lastPrediction.away_win_prob)}%`;
+        if (lastPrediction.away_odds !== undefined && lastPrediction.away_odds !== null) {
+            html += ` (${lastPrediction.away_odds >= 0 ? '+' : ''}${Math.round(lastPrediction.away_odds)})`;
+        }
+        html += '</div>';
+    }
+    if (lastPrediction.away_points_pred !== undefined && lastPrediction.away_points_pred !== null) {
+        html += `<div class="points-prediction">${Math.round(lastPrediction.away_points_pred)} pts</div>`;
+    }
+    html += '</div>';
+    
+    html += '<div class="vs">@</div>';
+    
+    // Home team
+    html += '<div class="team-panel home">';
+    if (homeLogo) {
+        html += `<img src="${homeLogo}" alt="${homeTeam} logo" class="team-logo-small">`;
+    }
+    html += `<div class="team-abbreviation" style="color: #${homeColor};">${homeTeam}`;
+    if (pregameLines.home_ml !== undefined && pregameLines.home_ml !== null) {
+        html += `<span class="moneyline">(${pregameLines.home_ml >= 0 ? '+' : ''}${pregameLines.home_ml})</span>`;
+    }
+    html += '</div>';
+    if (homePoints !== undefined && homePoints !== null) {
+        html += `<div class="team-score" style="color: #${homeColor};">${homePoints}</div>`;
+    } else if (pregameLines.spread !== undefined && pregameLines.spread !== null) {
+        html += `<div class="spread" style="color: #${homeColor};">${pregameLines.spread >= 0 ? '+' : ''}${pregameLines.spread.toFixed(1)}</div>`;
+    }
+    if (lastPrediction.home_win_prob !== undefined && lastPrediction.home_win_prob !== null) {
+        html += `<div class="prediction-banner">${Math.round(lastPrediction.home_win_prob)}%`;
+        if (lastPrediction.home_odds !== undefined && lastPrediction.home_odds !== null) {
+            html += ` (${lastPrediction.home_odds >= 0 ? '+' : ''}${Math.round(lastPrediction.home_odds)})`;
+        }
+        html += '</div>';
+    }
+    if (lastPrediction.home_points_pred !== undefined && lastPrediction.home_points_pred !== null) {
+        html += `<div class="points-prediction">${Math.round(lastPrediction.home_points_pred)} pts</div>`;
+    }
+    html += '</div>';
+    
+    html += '</div>';
+    if (gameDate) {
+        html += `<div class="game-date">${gameDate}</div>`;
+    }
+    
+    gameCardEl.innerHTML = html;
+}
+
+function closeMatchupChat() {
+    const modal = document.getElementById('matchupChatModal');
+    if (modal) {
+        modal.style.display = 'none';
+    }
+    matchupChatSessionId = null;
+}
+
+async function loadMatchupChatMessages() {
+    if (!matchupChatSessionId) return;
+    
+    try {
+        const response = await fetch(`/api/matchup-chat/sessions/${matchupChatSessionId}`);
+        if (!response.ok) return;
+        
+        const data = await response.json();
+        if (!data.success) return;
+        
+        const messages = data.session.messages || [];
+        const messagesDiv = document.getElementById('matchupChatMessages');
+        if (!messagesDiv) return;
+        
+        messagesDiv.innerHTML = '';
+        
+        for (let i = 0; i < messages.length; i++) {
+            const msg = messages[i];
+            if (msg.role === 'user' || msg.role === 'assistant') {
+                addMatchupMessage(msg.role, msg.content, i);
+            }
+        }
+        
+        scrollMatchupChatToBottom();
+    } catch (error) {
+        console.error('Error loading messages:', error);
+    }
+}
+
+function addMatchupMessage(role, content, index = null) {
+    const messagesDiv = document.getElementById('matchupChatMessages');
+    if (!messagesDiv) return null;
+    
+    const messageDiv = document.createElement('div');
+    messageDiv.className = `matchup-chat-message ${role}`;
+    
+    // Store message index and role for deletion
+    if (index !== null) {
+        messageDiv.setAttribute('data-message-index', index);
+    }
+    messageDiv.setAttribute('data-message-role', role);
+    
+    // Store plain text content for deletion
+    const plainText = typeof content === 'string' ? content : String(content);
+    messageDiv.setAttribute('data-plain-text', plainText.replace(/\\n/g, '\n'));
+    
+    // Create message bubble wrapper
+    const messageBubble = document.createElement('div');
+    messageBubble.className = 'message-bubble';
+    
+    // Add delete button
+    const deleteButton = document.createElement('button');
+    deleteButton.className = 'matchup-chat-delete-button';
+    deleteButton.innerHTML = '×';
+    deleteButton.title = 'Delete message';
+    deleteButton.onclick = () => deleteMatchupMessage(deleteButton);
+    messageBubble.appendChild(deleteButton);
+    
+    const contentDiv = document.createElement('div');
+    contentDiv.className = 'message-content';
+    
+    // Handle user messages - preserve newlines using CSS white-space: pre-wrap
+    if (role === 'user') {
+        if (typeof content === 'string') {
+            // Unescape any escaped newlines and escape HTML to prevent XSS
+            let contentToRender = content.replace(/\\n/g, '\n');
+            contentToRender = contentToRender
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+            contentDiv.textContent = contentToRender;
+        }
+    }
+    // Render markdown for assistant messages
+    else if (role === 'assistant') {
+        try {
+            // Check if marked is available
+            const markedAvailable = typeof marked !== 'undefined' && (marked.parse || typeof marked === 'function');
+            
+            if (markedAvailable) {
+                // Configure marked options
+                if (typeof marked.setOptions === 'function') {
+                    marked.setOptions({
+                        breaks: true,
+                        gfm: true
+                    });
+                } else if (typeof marked.use === 'function') {
+                    marked.use({
+                        breaks: true,
+                        gfm: true
+                    });
+                }
+                
+                // Ensure content has proper line breaks preserved
+                let contentToRender = content;
+                if (typeof content === 'string') {
+                    contentToRender = content.replace(/\\n/g, '\n');
+                }
+                
+                // Render markdown to HTML
+                let renderedContent;
+                if (typeof marked.parse === 'function') {
+                    renderedContent = marked.parse(contentToRender);
+                } else if (typeof marked === 'function') {
+                    renderedContent = marked(contentToRender);
+                } else {
+                    throw new Error('marked.parse is not available');
+                }
+                
+                // Verify it's actually HTML
+                if (!renderedContent || !renderedContent.includes('<')) {
+                    renderedContent = contentToRender.replace(/\n/g, '<br>');
+                }
+                
+                contentDiv.innerHTML = renderedContent;
+            } else {
+                // marked.js not loaded, use fallback
+                let fallbackContent = content;
+                if (typeof content === 'string') {
+                    fallbackContent = content.replace(/\\n/g, '\n').replace(/\n/g, '<br>');
+                }
+                contentDiv.innerHTML = fallbackContent;
+            }
+        } catch (e) {
+            console.error('Error rendering markdown:', e);
+            // Fallback: preserve newlines as <br> tags
+            let fallbackContent = content;
+            if (typeof content === 'string') {
+                fallbackContent = content.replace(/\\n/g, '\n').replace(/\n/g, '<br>');
+            }
+            contentDiv.innerHTML = fallbackContent;
+        }
+    }
+    
+    messageBubble.appendChild(contentDiv);
+    messageDiv.appendChild(messageBubble);
+    messagesDiv.appendChild(messageDiv);
+    
+    scrollMatchupChatToBottom();
+    return messageDiv;
+}
+
+async function deleteMatchupMessage(button) {
+    const messageDiv = button.closest('.matchup-chat-message');
+    if (!messageDiv) return;
+    
+    const messageIndex = messageDiv.getAttribute('data-message-index');
+    const role = messageDiv.getAttribute('data-message-role');
+    const messageContent = messageDiv.getAttribute('data-plain-text') || '';
+    
+    if (!matchupChatSessionId) {
+        // Just remove from DOM if no session
+        messageDiv.remove();
+        return;
+    }
+    
+    try {
+        const response = await fetch(`/api/matchup-chat/sessions/${matchupChatSessionId}/messages`, {
+            method: 'DELETE',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                message_index: messageIndex !== null && messageIndex !== '' ? parseInt(messageIndex) : null,
+                message_content: messageContent,
+                message_role: role
+            })
+        });
+        
+        const data = await response.json();
+        if (data.success) {
+            // If this is a user message, populate the input field with its text
+            if (role === 'user' && messageContent) {
+                const input = document.getElementById('matchupChatInput');
+                if (input) {
+                    input.value = messageContent;
+                    input.focus();
+                    input.setSelectionRange(input.value.length, input.value.length);
+                }
+            }
+            
+            // Remove from DOM
+            messageDiv.remove();
+            
+            // Reload messages to update indices
+            await loadMatchupChatMessages();
+        } else {
+            alert('Error deleting message: ' + (data.error || 'Unknown error'));
+        }
+    } catch (error) {
+        console.error('Error deleting message:', error);
+        alert('Error deleting message');
+    }
+}
+
+function scrollMatchupChatToBottom() {
+    const messagesDiv = document.getElementById('matchupChatMessages');
+    if (messagesDiv) {
+        messagesDiv.scrollTop = messagesDiv.scrollHeight;
+    }
+}
+
+async function sendMatchupMessage(event) {
+    event.preventDefault();
+    
+    const input = document.getElementById('matchupChatInput');
+    if (!input) return;
+    
+    const message = input.value.trim();
+    if (!message || !matchupChatSessionId) return;
+    
+    // Add user message to UI
+    addMatchupMessage('user', message);
+    input.value = '';
+    
+    // Show loading - create loading element properly
+    const messagesDiv = document.getElementById('matchupChatMessages');
+    const loadingDiv = document.createElement('div');
+    loadingDiv.className = 'matchup-chat-message assistant';
+    loadingDiv.id = 'matchup-loading-message';
+    const loadingContent = document.createElement('div');
+    loadingContent.className = 'message-content';
+    const loadingSpinner = document.createElement('div');
+    loadingSpinner.className = 'matchup-chat-loading';
+    loadingContent.appendChild(loadingSpinner);
+    loadingDiv.appendChild(loadingContent);
+    messagesDiv.appendChild(loadingDiv);
+    scrollMatchupChatToBottom();
+    
+    try {
+        const response = await fetch('/api/matchup-chat', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                message: message,
+                session_id: matchupChatSessionId,
+                memory: (() => {
+                    const memoryInput = document.getElementById('matchupChatMemoryInput');
+                    const memoryValue = memoryInput ? memoryInput.value.trim() : '';
+                    return memoryValue === '' ? null : (parseInt(memoryValue) || null);
+                })()
+            })
+        });
+        
+        // Remove loading message
+        const messagesDiv = document.getElementById('matchupChatMessages');
+        if (messagesDiv && messagesDiv.lastElementChild) {
+            messagesDiv.removeChild(messagesDiv.lastElementChild);
+        }
+        
+        if (!response.ok) {
+            const errorData = await response.json().catch(() => ({ error: 'Request failed' }));
+            addMatchupMessage('assistant', `Error: ${errorData.error || 'Request failed'}`);
+            return;
+        }
+        
+        const data = await response.json();
+        if (data.success) {
+            addMatchupMessage('assistant', data.response);
+        } else {
+            addMatchupMessage('assistant', `Error: ${data.error || 'Unknown error'}`);
+        }
+    } catch (error) {
+        // Remove loading message
+        const messagesDiv = document.getElementById('matchupChatMessages');
+        if (messagesDiv && messagesDiv.lastElementChild) {
+            messagesDiv.removeChild(messagesDiv.lastElementChild);
+        }
+        
+        addMatchupMessage('assistant', `Error: ${error.message}`);
+    }
+}
+
+// Handle textarea auto-resize
+const matchupChatInput = document.getElementById('matchupChatInput');
+if (matchupChatInput) {
+    matchupChatInput.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            const form = document.getElementById('matchupChatForm');
+            if (form) {
+                form.dispatchEvent(new Event('submit'));
+            }
+        }
+    });
+}
+
+// Close modal on escape key
+document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') {
+        const modal = document.getElementById('matchupChatModal');
+        if (modal && modal.style.display !== 'none') {
+            closeMatchupChat();
+        }
+    }
+});
+</script>
+
+<style>
+    .game-card-icons {
+        position: absolute;
+        top: 10px;
+        right: 10px;
+        display: flex;
+        gap: 8px;
+        z-index: 10;
+    }
+    
+    .game-card-info-icon,
+    .game-card-message-icon {
+        width: 28px;
+        height: 28px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: rgba(255, 255, 255, 0.9);
+        border-radius: 50%;
+        cursor: pointer;
+        transition: all 0.2s;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    }
+    
+    .game-card-info-icon:hover {
+        background: #2196F3;
+        color: white;
+        transform: scale(1.1);
+        box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+    }
+    
+    .game-card-message-icon:hover {
+        background: #667eea;
+        color: white;
+        transform: scale(1.1);
+        box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+    }
+    
+    .game-card-info-icon svg,
+    .game-card-message-icon svg {
+        width: 16px;
+        height: 16px;
+    }
+    
+    .features-modal {
+        display: none;
+        position: fixed;
+        z-index: 1000;
+        left: 0;
+        top: 0;
+        width: 100%;
+        height: 100%;
+        background-color: rgba(0, 0, 0, 0.5);
+        align-items: center;
+        justify-content: center;
+    }
+    
+    .features-modal-content {
+        background-color: #fff;
+        margin: auto;
+        padding: 0;
+        border-radius: 8px;
+        width: 90%;
+        max-width: 900px;
+        max-height: 90vh;
+        overflow-y: auto;
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+    }
+    
+    .features-modal-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 20px;
+        border-bottom: 1px solid #e0e0e0;
+        background: #f5f5f5;
+        border-radius: 8px 8px 0 0;
+        position: sticky;
+        top: 0;
+        z-index: 10;
+    }
+    
+    .features-modal-header h2 {
+        margin: 0;
+        font-size: 1.5em;
+        color: #333;
+    }
+    
+    .close-modal {
+        background: none;
+        border: none;
+        font-size: 2em;
+        cursor: pointer;
+        color: #666;
+        padding: 0;
+        width: 32px;
+        height: 32px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 4px;
+        transition: all 0.2s;
+    }
+    
+    .close-modal:hover {
+        background: #e0e0e0;
+        color: #333;
+    }
+    
+    .features-modal-body {
+        padding: 20px;
+    }
+    
+    .game-info {
+        margin-bottom: 20px;
+        padding: 15px;
+        background: #f9f9f9;
+        border-radius: 4px;
+        border-left: 4px solid #2196F3;
+    }
+    
+    .game-info strong {
+        font-size: 1.2em;
+        color: #333;
+    }
+    
+    .game-info small {
+        color: #666;
+    }
+    
+    .feature-category {
+        margin-bottom: 30px;
+    }
+    
+    .feature-category h3 {
+        margin: 0 0 10px 0;
+        font-size: 1.1em;
+        color: #2196F3;
+        font-weight: 600;
+    }
+    
+    .features-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.9em;
+    }
+    
+    .features-table thead {
+        background: #f5f5f5;
+    }
+    
+    .features-table th {
+        padding: 10px;
+        text-align: left;
+        font-weight: 600;
+        color: #666;
+        border-bottom: 2px solid #e0e0e0;
+    }
+    
+    .features-table td {
+        padding: 8px 10px;
+        border-bottom: 1px solid #f0f0f0;
+    }
+    
+    .features-table tr:hover {
+        background: #f9f9f9;
+    }
+    
+    .feature-name {
+        font-family: 'Courier New', monospace;
+        color: #333;
+        word-break: break-all;
+    }
+    
+    .feature-value {
+        text-align: right;
+        font-family: 'Courier New', monospace;
+        color: #2196F3;
+        font-weight: 500;
+    }
+    
+    .spinner {
+        border: 3px solid #f3f3f3;
+        border-top: 3px solid #2196F3;
+        border-radius: 50%;
+        width: 40px;
+        height: 40px;
+        animation: spin 1s linear infinite;
+        margin: 0 auto 20px;
+    }
+    
+    @keyframes spin {
+        0% { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
+    }
+</style>
+{% endblock %}
+
