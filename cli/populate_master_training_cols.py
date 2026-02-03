@@ -40,7 +40,7 @@ if project_root not in sys.path:
 
 from nba_app.core.mongo import Mongo
 from nba_app.core.models.bball_model import BballModel
-from nba_app.cli_old.master_training_data import MASTER_TRAINING_PATH, get_all_possible_features
+from nba_app.core.services.training_data import MASTER_TRAINING_PATH, get_all_possible_features
 from nba_app.core.features.dependencies import resolve_dependencies, categorize_features
 from nba_app.core.features.registry import FeatureRegistry
 from nba_app.core.features.prediction_mapping import (
@@ -1978,7 +1978,7 @@ Examples:
     backup = args.backup and not args.no_backup
 
     # Get league-aware master CSV path if using default
-    from nba_app.cli_old.master_training_data import get_master_training_path
+    from nba_app.core.services.training_data import get_master_training_path
     if args.master_csv == MASTER_TRAINING_PATH:
         # Using default path - get league-specific path instead
         args.master_csv = get_master_training_path(args.league)

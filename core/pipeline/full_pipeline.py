@@ -126,66 +126,42 @@ def run_espn_pull(
     verbose: bool = False
 ) -> bool:
     """Pull ESPN data for a single season."""
+    from datetime import datetime as _dt
+    from nba_app.core.services.espn_sync import fetch_and_save_games
+    from nba_app.core.league_config import load_league_config as _load_lc
+    from nba_app.core.mongo import Mongo
+
     state.update_season(season, status=Status.RUNNING, phase="pulling games",
                        start_time=time.time())
 
-    cmd = [
-        sys.executable, "cli_old/espn_api.py",
-        "--league", league,
-        "--dates", f"{start_date},{end_date}"
-    ]
-
-    if dry_run:
-        cmd.append("--dry-run")
-
     try:
-        env = {**os.environ, "PYTHONPATH": project_root, "PYTHONUNBUFFERED": "1"}
-        process = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            bufsize=1,
-            cwd=nba_app_dir,
-            env=env
+        league_config = _load_lc(league)
+        mongo = Mongo()
+
+        sd = _dt.strptime(start_date, '%Y%m%d').date()
+        ed = _dt.strptime(end_date, '%Y%m%d').date()
+
+        state.update_season(season, phase="fetching games")
+
+        stats = fetch_and_save_games(
+            mongo.db, league_config,
+            sd, ed,
+            dry_run=dry_run,
+            verbose=verbose
         )
 
-        games_count = 0
-        players_count = 0
+        games_count = stats.get('games_processed', 0)
+        players_count = stats.get('players_processed', 0)
 
-        for line in process.stdout:
-            line = line.strip()
-            line_lower = line.lower()
+        state.update_season(season, games_found=games_count, players_found=players_count)
 
-            if verbose:
-                print(f"[{season}] {line}")
-
-            if "fetching games for" in line_lower:
-                state.update_season(season, phase="fetching games")
-            elif "found" in line_lower and "events" in line_lower:
-                state.update_season(season, phase="processing games")
-            elif "stored" in line_lower and "player" in line_lower:
-                state.update_season(season, phase="processing players")
-
-            if "stored game" in line_lower or "would store game" in line_lower:
-                games_count += 1
-                state.update_season(season, games_found=games_count)
-
-            if "player stats" in line_lower:
-                match = re.search(r'(\d+)\s*player\s*stats', line_lower)
-                if match:
-                    players_count += int(match.group(1))
-                    state.update_season(season, players_found=players_count)
-
-        process.wait()
-
-        if process.returncode == 0:
+        if stats.get('success', False):
             state.update_season(season, status=Status.SUCCESS, phase="complete",
                               end_time=time.time())
             return True
         else:
             state.update_season(season, status=Status.FAILED, phase="failed",
-                              error=f"Exit code: {process.returncode}",
+                              error=stats.get('error', 'Unknown error'),
                               end_time=time.time())
             return False
 
@@ -197,36 +173,26 @@ def run_espn_pull(
 
 def run_post_processing(config: PipelineConfig, dry_run: bool = False):
     """Run post-processing steps (venues, players)."""
-    steps = []
+    from nba_app.core.services.espn_sync import refresh_venues, refresh_players
+    from nba_app.core.mongo import Mongo
+
+    mongo = Mongo()
+
     if config.refresh_venues:
-        steps.append(("Refreshing venues", ["--refresh-venues"]))
-    if config.refresh_players:
-        steps.append(("Refreshing players", ["--refresh-players"]))
-
-    for desc, args in steps:
-        print(f"  {desc}...")
-        cmd = [
-            sys.executable, "cli_old/espn_api.py",
-            "--league", config.league.league_id,
-        ] + args
-
-        if dry_run:
-            cmd.append("--dry-run")
-            print(f"    [DRY RUN] Would run: {' '.join(cmd)}")
-            continue
-
+        print("  Refreshing venues...")
         try:
-            subprocess.run(
-                cmd,
-                cwd=nba_app_dir,
-                env={**os.environ, "PYTHONPATH": project_root},
-                capture_output=True,
-                text=True,
-                check=True
-            )
-            print(f"    Done.")
-        except subprocess.CalledProcessError as e:
-            print(f"    Warning: {desc} failed: {e.stderr[:200] if e.stderr else 'Unknown error'}")
+            refresh_venues(mongo.db, config.league, dry_run=dry_run)
+            print("    Done.")
+        except Exception as e:
+            print(f"    Warning: Refreshing venues failed: {str(e)[:200]}")
+
+    if config.refresh_players:
+        print("  Refreshing players...")
+        try:
+            refresh_players(mongo.db, config.league, dry_run=dry_run)
+            print("    Done.")
+        except Exception as e:
+            print(f"    Warning: Refreshing players failed: {str(e)[:200]}")
 
 
 def run_injuries(config: PipelineConfig, dry_run: bool = False):
@@ -275,32 +241,26 @@ def run_injuries(config: PipelineConfig, dry_run: bool = False):
 
 def run_elo_cache(config: PipelineConfig, dry_run: bool = False):
     """Refresh ELO cache."""
+    from nba_app.core.stats.elo_cache import EloCache
+    from nba_app.core.mongo import Mongo
+
     if not config.cache_elo:
         print("  Skipping ELO cache (disabled in config)")
         return
 
     print("  Caching ELO ratings...")
-    cmd = [
-        sys.executable, "cli_old/cache_elo_ratings.py",
-        "--league", config.league.league_id
-    ]
 
     if dry_run:
-        print(f"    [DRY RUN] Would run: {' '.join(cmd)}")
+        print(f"    [DRY RUN] Would compute and cache ELO ratings")
         return
 
     try:
-        subprocess.run(
-            cmd,
-            cwd=nba_app_dir,
-            env={**os.environ, "PYTHONPATH": project_root},
-            capture_output=True,
-            text=True,
-            check=True
-        )
-        print("    Done.")
-    except subprocess.CalledProcessError as e:
-        print(f"    Warning: ELO cache failed: {e.stderr[:200] if e.stderr else 'Unknown error'}")
+        mongo = Mongo()
+        elo_cache = EloCache(mongo.db, league=config.league)
+        stats = elo_cache.compute_and_cache_all()
+        print(f"    Done - {stats.get('ratings_cached', 0)} ratings cached.")
+    except Exception as e:
+        print(f"    Warning: ELO cache failed: {str(e)[:200]}")
 
 
 def run_training_generation(config: PipelineConfig, dry_run: bool = False, **kwargs):
@@ -352,32 +312,26 @@ def run_training_generation(config: PipelineConfig, dry_run: bool = False, **kwa
 
 def run_csv_registration(config: PipelineConfig, dry_run: bool = False):
     """Register master CSV in MongoDB."""
+    from nba_app.core.services.training_data import register_existing_master_csv
+    from nba_app.core.mongo import Mongo
+
     if not config.register_csv:
         print("  Skipping CSV registration (disabled in config)")
         return True
 
     print("  Registering master CSV...")
-    cmd = [
-        sys.executable, "cli_old/register_master_csv.py",
-        "--league", config.league.league_id
-    ]
 
     if dry_run:
-        print(f"    [DRY RUN] Would run: {' '.join(cmd)}")
+        print(f"    [DRY RUN] Would register master CSV")
         return True
 
     try:
-        subprocess.run(
-            cmd,
-            cwd=nba_app_dir,
-            env={**os.environ, "PYTHONPATH": project_root},
-            capture_output=True,
-            check=True
-        )
+        mongo = Mongo()
+        register_existing_master_csv(mongo.db, league=config.league)
         print("    Done.")
         return True
-    except subprocess.CalledProcessError:
-        print("    Warning: CSV registration failed")
+    except Exception as e:
+        print(f"    Warning: CSV registration failed: {str(e)[:200]}")
         return False
 
 

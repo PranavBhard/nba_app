@@ -28,7 +28,7 @@ from nba_app.agents.tools.experiment_runner import ExperimentRunner
 from nba_app.agents.tools.dataset_builder import DatasetBuilder
 from nba_app.agents.tools.run_tracker import RunTracker
 from nba_app.core.data import ClassifierConfigRepository
-from nba_app.cli_old.train import read_csv_safe
+from nba_app.core.training.cache_utils import read_csv_safe
 from nba_app.agents.schemas.experiment_config import ExperimentConfig
 
 

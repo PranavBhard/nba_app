@@ -103,7 +103,7 @@
                         <span class="moneyline">({{ "+" if game.pregame_lines['away_ml'] >= 0 else "" }}{{ game.pregame_lines['away_ml'] }})</span>
                         {% endif %}
                     </div>
-                    {% if game.away_points is not none %}
+                    {% if game.status in ('in', 'post') and game.away_points is not none %}
                     <div class="team-score" style="color: #{{ game.away_team_color }};">
                         {{ game.away_points }}
                     </div>
@@ -147,7 +147,7 @@
                         <span class="moneyline">({{ "+" if game.pregame_lines['home_ml'] >= 0 else "" }}{{ game.pregame_lines['home_ml'] }})</span>
                         {% endif %}
                     </div>
-                    {% if game.home_points is not none %}
+                    {% if game.status in ('in', 'post') and game.home_points is not none %}
                     <div class="team-score" style="color: #{{ game.home_team_color }};">
                         {{ game.home_points }}
                     </div>
@@ -1393,14 +1393,16 @@
             if (liveData.home_score !== null) currentGameData.home_score = liveData.home_score;
             if (liveData.away_score !== null) currentGameData.away_score = liveData.away_score;
 
-            // Update modal display
-            const awaySpreadScoreEl = document.getElementById('gd-away-spread-score');
-            const homeSpreadScoreEl = document.getElementById('gd-home-spread-score');
-            if (awaySpreadScoreEl && liveData.away_score !== null) {
-                awaySpreadScoreEl.textContent = liveData.away_score;
-            }
-            if (homeSpreadScoreEl && liveData.home_score !== null) {
-                homeSpreadScoreEl.textContent = liveData.home_score;
+            // Update modal display (only show scores for live/completed games)
+            if (liveData.status === 'in' || liveData.status === 'post') {
+                const awaySpreadScoreEl = document.getElementById('gd-away-spread-score');
+                const homeSpreadScoreEl = document.getElementById('gd-home-spread-score');
+                if (awaySpreadScoreEl && liveData.away_score !== null) {
+                    awaySpreadScoreEl.textContent = liveData.away_score;
+                }
+                if (homeSpreadScoreEl && liveData.home_score !== null) {
+                    homeSpreadScoreEl.textContent = liveData.home_score;
+                }
             }
         }
     }
@@ -3893,6 +3895,7 @@ async function openMatchupChat(gameId, homeTeam, awayTeam, gameDate) {
                 const awayPoints = gameCard.getAttribute('data-away-points');
                 gameInfo.home_points = homePoints ? parseInt(homePoints) : null;
                 gameInfo.away_points = awayPoints ? parseInt(awayPoints) : null;
+                gameInfo.status = gameCard.getAttribute('data-game-status') || 'pre';
                 gameInfo.gametime = gameCard.getAttribute('data-gametime') || '';
 
                 // Parse pregame_lines and last_prediction
@@ -3933,6 +3936,7 @@ async function openMatchupChat(gameId, homeTeam, awayTeam, gameDate) {
                     gameInfo.away_team_color = detailData.away_team_color || gameInfo.away_team_color;
                     gameInfo.pregame_lines = detailData.pregame_lines || gameInfo.pregame_lines;
                     gameInfo.last_prediction = detailData.last_prediction || gameInfo.last_prediction;
+                    gameInfo.status = detailData.status || gameInfo.status;
                     gameInfo.gametime = detailData.gametime || gameInfo.gametime;
                     // Store game_id for Kalshi lookup
                     gameInfo.game_id = detailData.game_id || gameId;
@@ -4040,8 +4044,11 @@ function updateMatchupChatGameCard(game) {
             awayMlEl.style.display = 'none';
         }
     }
+    const gameStatus = game.status || 'pre';
+    const mcGameLiveOrDone = gameStatus === 'in' || gameStatus === 'post';
+
     if (awaySpreadScoreEl) {
-        if (awayPoints !== undefined && awayPoints !== null) {
+        if (mcGameLiveOrDone && awayPoints !== undefined && awayPoints !== null) {
             awaySpreadScoreEl.textContent = awayPoints;
             awaySpreadScoreEl.style.color = '#' + awayColor;
             awaySpreadScoreEl.style.display = '';
@@ -4079,7 +4086,7 @@ function updateMatchupChatGameCard(game) {
         }
     }
     if (homeSpreadScoreEl) {
-        if (homePoints !== undefined && homePoints !== null) {
+        if (mcGameLiveOrDone && homePoints !== undefined && homePoints !== null) {
             homeSpreadScoreEl.textContent = homePoints;
             homeSpreadScoreEl.style.color = '#' + homeColor;
             homeSpreadScoreEl.style.display = '';

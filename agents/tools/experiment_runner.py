@@ -19,12 +19,9 @@ parent_dir = os.path.dirname(os.path.dirname(os.path.dirname(script_dir)))
 if parent_dir not in sys.path:
     sys.path.insert(0, parent_dir)
 
-from nba_app.cli_old.train import (
-    create_model_with_c,
-    evaluate_model_combo,
-    evaluate_model_combo_with_calibration,
-    read_csv_safe
-)
+from nba_app.core.training.model_factory import create_model_with_c
+from nba_app.core.training.model_evaluation import evaluate_model_combo, evaluate_model_combo_with_calibration
+from nba_app.core.training.cache_utils import read_csv_safe
 from nba_app.core.models.points_regression import PointsRegressionTrainer
 from nba_app.agents.tools.dataset_builder import DatasetBuilder
 from nba_app.agents.tools.run_tracker import RunTracker
@@ -594,7 +591,7 @@ class ExperimentRunner:
             
             # Generate predictions for all games in dataset and cache them
             # OPTIMIZATION: Use vectorized prediction instead of row-by-row
-            from nba_app.cli_old.point_prediction_cache import PointPredictionCache
+            from nba_app.core.data.cache import PointPredictionCache
             cache = PointPredictionCache(db=self.db)
 
             # Generate predictions for all games in dataset using the trained model

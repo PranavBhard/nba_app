@@ -120,62 +120,23 @@ def run_espn_pull(
 
     Returns dict with statistics.
     """
-    # Convert dates to ESPN format (YYYYMMDD,YYYYMMDD)
-    date_str = f"{start_date.strftime('%Y%m%d')},{end_date.strftime('%Y%m%d')}"
+    from nba_app.core.services.espn_sync import fetch_and_save_games
 
-    cmd = [
-        sys.executable, "cli_old/espn_api.py",
-        "--league", league_config.league_id,
-        "--dates", date_str
-    ]
-
-    if dry_run:
-        cmd.append("--dry-run")
-
-    if verbose:
-        print(f"  Running: {' '.join(cmd)}")
-
-    stats = {
-        'games_processed': 0,
-        'players_processed': 0,
-        'success': False,
-        'error': None
-    }
-
+    mongo = Mongo()
     try:
-        env = {**os.environ, "PYTHONPATH": project_root, "PYTHONUNBUFFERED": "1"}
-        process = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            bufsize=1,
-            cwd=nba_app_dir,
-            env=env
+        stats = fetch_and_save_games(
+            mongo.db, league_config,
+            start_date, end_date,
+            dry_run=dry_run,
+            verbose=verbose
         )
-
-        for line in process.stdout:
-            line = line.strip()
-            if verbose:
-                print(f"    {line}")
-
-            # Parse progress from output
-            line_lower = line.lower()
-            if "stored game" in line_lower or "would store game" in line_lower:
-                stats['games_processed'] += 1
-            elif "player stats" in line_lower:
-                import re
-                match = re.search(r'(\d+)\s*player\s*stats', line_lower)
-                if match:
-                    stats['players_processed'] += int(match.group(1))
-
-        process.wait()
-        stats['success'] = process.returncode == 0
-        if not stats['success']:
-            stats['error'] = f"Exit code: {process.returncode}"
-
     except Exception as e:
-        stats['error'] = str(e)
+        stats = {
+            'games_processed': 0,
+            'players_processed': 0,
+            'success': False,
+            'error': str(e)
+        }
 
     return stats
 
@@ -191,57 +152,26 @@ def run_post_processing(
 
     Returns dict with step results.
     """
+    from nba_app.core.services.espn_sync import refresh_venues, refresh_players
+
+    mongo = Mongo()
     results = {}
 
     if 'venues' in data_types:
         print("  Refreshing venues...")
-        cmd = [
-            sys.executable, "cli_old/espn_api.py",
-            "--league", league_config.league_id,
-            "--refresh-venues"
-        ]
-        if dry_run:
-            cmd.append("--dry-run")
-
         try:
-            result = subprocess.run(
-                cmd,
-                cwd=nba_app_dir,
-                env={**os.environ, "PYTHONPATH": project_root},
-                capture_output=True,
-                text=True,
-                check=True
-            )
-            results['venues'] = {'success': True}
-            if verbose:
-                print(f"    {result.stdout[:500] if result.stdout else 'Done'}")
-        except subprocess.CalledProcessError as e:
-            results['venues'] = {'success': False, 'error': e.stderr[:200] if e.stderr else str(e)}
+            result = refresh_venues(mongo.db, league_config, dry_run=dry_run)
+            results['venues'] = {'success': result.get('success', True)}
+        except Exception as e:
+            results['venues'] = {'success': False, 'error': str(e)[:200]}
 
     if 'players' in data_types:
         print("  Refreshing players metadata...")
-        cmd = [
-            sys.executable, "cli_old/espn_api.py",
-            "--league", league_config.league_id,
-            "--refresh-players"
-        ]
-        if dry_run:
-            cmd.append("--dry-run")
-
         try:
-            result = subprocess.run(
-                cmd,
-                cwd=nba_app_dir,
-                env={**os.environ, "PYTHONPATH": project_root},
-                capture_output=True,
-                text=True,
-                check=True
-            )
-            results['players'] = {'success': True}
-            if verbose:
-                print(f"    {result.stdout[:500] if result.stdout else 'Done'}")
-        except subprocess.CalledProcessError as e:
-            results['players'] = {'success': False, 'error': e.stderr[:200] if e.stderr else str(e)}
+            result = refresh_players(mongo.db, league_config, dry_run=dry_run)
+            results['players'] = {'success': result.get('success', True)}
+        except Exception as e:
+            results['players'] = {'success': False, 'error': str(e)[:200]}
 
     return results
 
@@ -301,31 +231,23 @@ def run_elo_cache(
 
     Returns dict with result.
     """
+    from nba_app.core.stats.elo_cache import EloCache
+
     print("  Caching ELO ratings...")
 
-    cmd = [
-        sys.executable, "cli_old/cache_elo_ratings.py",
-        "--league", league_config.league_id
-    ]
-
     if dry_run:
-        print(f"    [DRY RUN] Would run: {' '.join(cmd)}")
+        print(f"    [DRY RUN] Would compute and cache ELO ratings")
         return {'success': True, 'dry_run': True}
 
     try:
-        result = subprocess.run(
-            cmd,
-            cwd=nba_app_dir,
-            env={**os.environ, "PYTHONPATH": project_root},
-            capture_output=True,
-            text=True,
-            check=True
-        )
+        mongo = Mongo()
+        elo_cache = EloCache(mongo.db, league=league_config)
+        stats = elo_cache.compute_and_cache_all()
         if verbose:
-            print(f"    Done")
-        return {'success': True}
-    except subprocess.CalledProcessError as e:
-        return {'success': False, 'error': e.stderr[:200] if e.stderr else str(e)}
+            print(f"    Done - {stats.get('ratings_cached', 0)} ratings cached")
+        return {'success': True, **stats}
+    except Exception as e:
+        return {'success': False, 'error': str(e)[:200]}
 
 
 def run_venue_geocoding(

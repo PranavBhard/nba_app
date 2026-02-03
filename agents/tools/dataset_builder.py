@@ -63,7 +63,7 @@ class DatasetBuilder:
             (pred_home_points, pred_away_points, pred_point_total) are available in the dataframe
             for reference/analysis but are not used as features in classification training.
         """
-        from nba_app.cli_old.point_prediction_cache import PointPredictionCache
+        from nba_app.core.data.cache import PointPredictionCache
         cache = PointPredictionCache(db=self.db)
         
         try:

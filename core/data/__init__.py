@@ -23,7 +23,8 @@ Architecture:
          │   ├── PointsConfigRepository (model_config_points_nba)
          │   ├── ExperimentRunsRepository (experiment_runs)
          │   ├── LeagueStatsCache (cached_league_stats)
-         │   └── EloRatingsCache (nba_cached_elo_ratings)
+         │   ├── EloRatingsCache (nba_cached_elo_ratings)
+         │   └── PointPredictionCache (point_predictions_cache)
          │
          └── External API Clients
              └── ESPNClient (ESPN NBA API)
@@ -51,9 +52,10 @@ from .games import GamesRepository
 from .players import PlayerStatsRepository, PlayersRepository
 from .rosters import RostersRepository, TeamsRepository
 from .models import ClassifierConfigRepository, PointsConfigRepository, ExperimentRunsRepository
-from .cache import LeagueStatsCache, EloRatingsCache
+from .cache import LeagueStatsCache, EloRatingsCache, PointPredictionCache
 
 # External API Clients
+from .league_db_proxy import LeagueDbProxy
 from .espn_client import ESPNClient, GameInfo, MatchupInfo
 
 __all__ = [
@@ -79,6 +81,10 @@ __all__ = [
     # Cache
     'LeagueStatsCache',
     'EloRatingsCache',
+    'PointPredictionCache',
+
+    # League DB Proxy
+    'LeagueDbProxy',
 
     # ESPN API
     'ESPNClient',

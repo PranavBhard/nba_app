@@ -868,7 +868,7 @@ class TrainingDataService:
 # Convenience Functions (Backward Compatibility)
 # =============================================================================
 # These standalone functions provide backward compatibility with the old
-# cli_old/master_training_data.py interface. New code should use
+# master_training_data interface. New code should use
 # TrainingDataService directly.
 
 def get_master_training_path(league: Union[str, "LeagueConfig", None] = None) -> str:

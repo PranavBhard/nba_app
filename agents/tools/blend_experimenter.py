@@ -20,7 +20,8 @@ if parent_dir not in sys.path:
 from nba_app.core.mongo import Mongo
 from nba_app.core.models.bball_model import BballModel
 from nba_app.core.data import GamesRepository
-from nba_app.cli_old.train import create_model_with_c, read_csv_safe
+from nba_app.core.training.model_factory import create_model_with_c
+from nba_app.core.training.cache_utils import read_csv_safe
 
 
 class BlendExperimenter:

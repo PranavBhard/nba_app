@@ -21,7 +21,7 @@ if project_root not in sys.path:
 
 from nba_app.core.mongo import Mongo
 from nba_app.core.models.bball_model import BballModel
-from nba_app.cli_old.train import create_model_with_c
+from nba_app.core.training.model_factory import create_model_with_c
 from nba_app.core.services.training_data import get_all_possible_features
 from nba_app.web.app import load_model_from_mongo_config
 import pandas as pd

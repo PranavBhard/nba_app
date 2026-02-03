@@ -10,6 +10,7 @@ This module contains high-level service orchestration:
 - WebpageParser: Extract clean text from HTML/URLs
 - LineupService: Live game lineup data from ESPN
 - NewsService: News/content fetcher from configured sources
+- RosterService: Build team rosters from player game stats
 """
 
 # Prediction service
@@ -67,6 +68,9 @@ from nba_app.core.services.game_service import (
     get_team_info,
 )
 
+# Roster service
+from nba_app.core.services.roster_service import build_rosters
+
 # Jobs infrastructure (for background task tracking)
 from nba_app.core.services.jobs import (
     create_job,
@@ -118,6 +122,8 @@ __all__ = [
     'get_game_detail',
     'get_team_players',
     'get_team_info',
+    # Roster service
+    'build_rosters',
     # Jobs infrastructure
     'create_job',
     'update_job_progress',

@@ -28,11 +28,8 @@ These layers **consume** `core/` - they do NOT implement core functionality them
 4. **Consumer layers are thin wrappers** - `web/`, `agents/`, and `cli/` should only handle I/O, formatting, and orchestration. The actual logic lives in `core/`.
 5. **ALL cli scripts and web app views/endpoints are thin wrappers of core layer code** - They NEVER rewrite shared core code.
 6. **League-driven architecture** - Assume the first argument for ALL `cli/scripts` is `<league>` and the script uses league config YAMLs (`leagues/`) to run dynamically for different leagues. Assume every web app view/page/core logic update uses the league YAML config.
-7. **NEVER import from `cli_old/`** - The `cli_old/` directory is deprecated legacy code. All imports from `cli_old/` must be replaced with `core/` equivalents. Any shared logic in `cli_old/` that doesn't exist in `core/` must be migrated to `core/` first.
-
 ### ⚠️ HARD STOPS - Do NOT Proceed If:
 
-- **Importing from `cli_old/`**: Stop. Find or create the `core/` equivalent.
 - **Writing sklearn/model training logic in `web/` or `cli/`**: Stop. This belongs in `core/services/` or `core/training/`.
 - **Writing feature calculation logic outside `core/features/`**: Stop. Use the feature registry.
 - **Writing database queries outside `core/` or repository classes**: Stop. Use repository patterns.
@@ -52,25 +49,15 @@ These layers **consume** `core/` - they do NOT implement core functionality them
 - Does this functionality already exist in `core/`? → **Use it**
 - Am I about to modify a file outside `core/` that has a `core/` equivalent? → **Stop. Use the `core/` version**
 - Is this new core logic? → **Add it to `core/`, then call it from consumer layers**
-- Am I importing from `cli_old/`? → **Stop. Migrate to `core/` first**
 - Am I writing training/fitting logic in a view? → **Stop. Put it in `core/services/`**
 
 ### Known Technical Debt (To Be Fixed)
 
 These are known violations that need refactoring:
 
-1. ~~**`web/app.py` imports from `cli_old/train.py`**~~ ✅ FIXED
-   - Training functions moved to `core/training/` module
-   - `web/app.py` now imports from `core/training/`
-
-2. **Training logic inline in `web/app.py`** (around line 7300+)
+1. **Training logic inline in `web/app.py`** (around line 7300+)
    - StandardScaler, SelectKBest, train_test_split inline → Should call `TrainingService`
    - This is a future refactoring to move evaluation loops to TrainingService
-
-3. **Other `cli_old/` imports in `web/app.py`** (future migration)
-   - `cli_old/espn_api.py` → Should move to `core/data/` or `core/services/`
-   - `cli_old/points_regression_features.py` → Should move to `core/features/`
-   - `cli_old/populate_master_training_cols.py` → Should move to `core/`
 
 ---
 

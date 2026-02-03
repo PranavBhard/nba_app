@@ -273,3 +273,41 @@ def get_common_layer_configs() -> Dict[str, List[str]]:
         'core_only': ['layer_1', 'layer_3'],  # Core strength + meta priors
         'context_heavy': ['layer_1', 'layer_2', 'layer_4'],  # Skip era normalization
     }
+
+
+def find_features_by_substrings(features: List[str], substrings: List[str], match_mode: str = 'OR') -> List[str]:
+    """
+    Find features that match any or all of the given substrings.
+
+    Args:
+        features: List of all feature names to search
+        substrings: List of substrings to match against (case-insensitive)
+        match_mode: 'OR' to match features containing ANY substring, 'AND' to match features containing ALL substrings
+
+    Returns:
+        List of matching feature names
+    """
+    if not substrings:
+        return []
+
+    # Normalize substrings to lowercase for case-insensitive matching
+    substrings_lower = [s.lower().strip() for s in substrings if s.strip()]
+
+    if not substrings_lower:
+        return []
+
+    matching_features = []
+
+    for feature in features:
+        feature_lower = feature.lower()
+
+        if match_mode.upper() == 'AND':
+            # AND mode: feature must contain ALL substrings
+            if all(substring in feature_lower for substring in substrings_lower):
+                matching_features.append(feature)
+        else:
+            # OR mode (default): feature must contain ANY substring
+            if any(substring in feature_lower for substring in substrings_lower):
+                matching_features.append(feature)
+
+    return matching_features

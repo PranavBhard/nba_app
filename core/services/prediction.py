@@ -849,12 +849,11 @@ class PredictionService:
             List of MatchupInfo objects
         """
         try:
-            # Import ESPN API functions
-            from nba_app.cli_old.espn_api import get_scoreboard, get_game_summary
+            # Use ESPNClient for API access
+            from nba_app.core.data import ESPNClient
 
-            # Pass league_id to ensure correct ESPN endpoint is used
-            league_id = self.league.league_id if self.league else None
-            scoreboard = get_scoreboard(game_date, league_id=league_id)
+            espn_client = ESPNClient(league=self.league)
+            scoreboard = espn_client.get_scoreboard_site(game_date)
             if not scoreboard:
                 print(f"[PredictionService] get_scoreboard returned None/empty for {game_date}")
                 return []
@@ -896,7 +895,7 @@ class PredictionService:
 
                 # Fallback to game summary if needed
                 if not venue_guid:
-                    game_summary = get_game_summary(game_id, league_id=league_id)
+                    game_summary = espn_client.get_game_summary(game_id)
                     if game_summary:
                         game_info = game_summary.get('gameInfo', {})
                         venue = game_info.get('venue', {})

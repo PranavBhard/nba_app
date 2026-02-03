@@ -392,10 +392,10 @@ def get_nba_model():
     return _nba_model
 
 
-def get_points_model_trainer(preloaded_selected_config: dict = None):
+def get_points_model_trainer(preloaded_selected_config: dict = None, points_config_collection: str = None):
     """
     Get PointsRegressionTrainer instance with selected config from MongoDB.
-    
+
     Returns:
         PointsRegressionTrainer instance with loaded model, or None if no config selected
     """
@@ -403,10 +403,18 @@ def get_points_model_trainer(preloaded_selected_config: dict = None):
         from nba_app.core.models import PointsRegressionTrainer
         global _points_trainer, _points_trainer_model_path
 
+        # Determine collection name
+        if points_config_collection is None:
+            try:
+                from flask import g as flask_g
+                points_config_collection = flask_g.league.collections.get('model_config_points', 'model_config_points_nba')
+            except Exception:
+                points_config_collection = 'model_config_points_nba'
+
         # Accept pre-fetched config to avoid extra DB call
         selected_config = preloaded_selected_config
         if selected_config is None:
-            selected_config = db.model_config_points_nba.find_one({'selected': True})
+            selected_config = db[points_config_collection].find_one({'selected': True})
         if not selected_config:
             print("No selected points model config found")
             return None
@@ -610,7 +618,7 @@ def _get_venv_python_executable() -> str:
     return venv_python if os.path.exists(venv_python) else sys.executable
 
 
-def _spawn_master_training_job(cmd: list, job_id: str, job_type: str) -> int:
+def _spawn_master_training_job(cmd: list, job_id: str, job_type: str, league=None) -> int:
     """
     Spawn a non-blocking subprocess and attach logs + pid to the Mongo job record.
 
@@ -635,7 +643,8 @@ def _spawn_master_training_job(cmd: list, job_id: str, job_type: str) -> int:
         )
 
     # Persist pid + log path for observability
-    db.jobs_nba.update_one(
+    jobs_collection = g.league.collections.get('jobs', 'jobs_nba') if (league is None and hasattr(g, 'league') and g.league) else (league.collections.get('jobs', 'jobs_nba') if league else 'jobs_nba')
+    db[jobs_collection].update_one(
         {'_id': ObjectId(job_id)},
         {'$set': {
             'metadata.pid': proc.pid,
@@ -846,10 +855,11 @@ def save_model_config_to_mongo(
     use_master: bool = False,
     min_games_played: int = 15,
     point_model_id: str = None,
-    feature_importance_rankings: list = None
+    feature_importance_rankings: list = None,
+    config_collection: str = 'model_config_nba'
 ) -> str:
     """
-    Save or update model configuration in MongoDB (model_config_nba collection).
+    Save or update model configuration in MongoDB.
     
     Args:
         model_type: Model type (e.g., 'LogisticRegression')
@@ -892,7 +902,7 @@ def save_model_config_to_mongo(
     )
     
     # Check if config already exists using the config hash
-    existing = db.model_config_nba.find_one({
+    existing = db[config_collection].find_one({
         'config_hash': config_hash
     })
     
@@ -998,9 +1008,9 @@ def save_model_config_to_mongo(
         update_doc['selected'] = existing.get('selected', False) or desired_select
     else:
         # New config: select if requested, otherwise select only if none exists
-        existing_selected = db.model_config_nba.find_one({'selected': True})
+        existing_selected = db[config_collection].find_one({'selected': True})
         update_doc['selected'] = desired_select or (existing_selected is None)
-    
+
     # Preserve custom name if it exists
     if existing and existing.get('name'):
         # Only preserve if it's a custom name (not auto-generated)
@@ -1022,19 +1032,19 @@ def save_model_config_to_mongo(
         update_doc['trained_at'] = datetime.utcnow()
     
     # Upsert using config_hash as the unique identifier
-    result = db.model_config_nba.update_one(
+    result = db[config_collection].update_one(
         {
             'config_hash': config_hash
         },
         {'$set': update_doc},
         upsert=True
     )
-    
+
     # Get the document ID
     if result.upserted_id:
         doc_id = str(result.upserted_id)
     else:
-        doc = db.model_config_nba.find_one({
+        doc = db[config_collection].find_one({
             'config_hash': config_hash
         })
         doc_id = str(doc['_id'])
@@ -1042,7 +1052,7 @@ def save_model_config_to_mongo(
     # If this config should be selected, now safely unselect others (excluding this doc)
     if update_doc.get('selected', False):
         try:
-            db.model_config_nba.update_many(
+            db[config_collection].update_many(
                 {'_id': {'$ne': ObjectId(doc_id)}, 'selected': True},
                 {'$set': {'selected': False}}
             )
@@ -1081,7 +1091,7 @@ def save_artifacts_for_trained_model(model_instance, config_doc: dict, df, scale
         print(f"❌ Failed to save model artifacts: {artifact_result.get('error')}")
 
 
-def save_model_artifacts(model, scaler, feature_names, run_id: str, config_id: str = None) -> dict:
+def save_model_artifacts(model, scaler, feature_names, run_id: str, config_id: str = None, config_collection: str = 'model_config_nba') -> dict:
     """
     Save trained model artifacts to disk and return file paths.
     
@@ -1127,7 +1137,7 @@ def save_model_artifacts(model, scaler, feature_names, run_id: str, config_id: s
         # If we have a config_id, update MongoDB with artifact paths
         if config_id:
             from bson import ObjectId
-            db.model_config_nba.update_one(
+            db[config_collection].update_one(
                 {'_id': ObjectId(config_id)},
                 {'$set': {
                     'model_artifact_path': model_path,
@@ -1790,7 +1800,7 @@ def index(league_id=None):
                 # Gametime - parse from event.date (UTC format like "2026-02-01T19:00Z")
                 if event_gametime:
                     try:
-                        from nba_app.cli_old.espn_api import parse_gametime
+                        from nba_app.core.utils.date_utils import parse_gametime
                         parsed_gametime = parse_gametime(event_gametime)
                         if parsed_gametime:
                             update_doc['$set']['gametime'] = parsed_gametime
@@ -3620,7 +3630,8 @@ def download_config_training(league_id=None):
     """Download the training data CSV file for the current model configuration."""
     try:
         # Get training CSV from current selected config
-        selected_config = db.model_config_nba.find_one({'selected': True})
+        classifier_config_collection = g.league.collections.get('model_config_classifier', 'model_config_nba')
+        selected_config = db[classifier_config_collection].find_one({'selected': True})
         if not selected_config:
             return jsonify({'error': 'No model configuration selected'}), 404
         
@@ -3648,7 +3659,7 @@ def download_config_training(league_id=None):
             if not new_path:
                 return jsonify({'error': 'Training data file does not exist'}), 404
             # Update DB with corrected path for future requests
-            db.model_config_nba.update_one({'_id': selected_config['_id']}, {'$set': {'training_csv': new_path}})
+            db[classifier_config_collection].update_one({'_id': selected_config['_id']}, {'$set': {'training_csv': new_path}})
             training_csv = new_path
         
         # Get filename from path
@@ -3943,9 +3954,9 @@ def model_config_points(league_id=None):
     # If CSV loading failed, fallback to hardcoded feature sets (for backward compatibility)
     if not feature_sets_dict:
         print("Warning: Failed to load features from CSV for points config, falling back to hardcoded sets")
-        from nba_app.cli_old.points_regression_features import POINTS_FEATURE_SETS, POINTS_FEATURE_SET_DESCRIPTIONS
-        feature_sets_dict = dict(POINTS_FEATURE_SETS)
-        feature_set_descriptions = POINTS_FEATURE_SET_DESCRIPTIONS
+        from nba_app.core.features.sets import FEATURE_SETS, FEATURE_SET_DESCRIPTIONS
+        feature_sets_dict = dict(FEATURE_SETS)
+        feature_set_descriptions = FEATURE_SET_DESCRIPTIONS
 
     # Get league-aware collection name
     points_config_collection = g.league.collections.get('model_config_points', 'model_config_points_nba')
@@ -4019,7 +4030,8 @@ def market_dashboard(league_id=None):
 def get_points_model_configs(league_id=None):
     """Get all points model configurations."""
     try:
-        configs = list(db.model_config_points_nba.find({}).sort('trained_at', -1))
+        points_config_collection = g.league.collections.get('model_config_points', 'model_config_points_nba')
+        configs = list(db[points_config_collection].find({}).sort('trained_at', -1))
         
         # Convert ObjectId to string and sanitize
         for config in configs:
@@ -4047,18 +4059,19 @@ def get_points_model_configs(league_id=None):
 def select_points_model_config(league_id=None):
     """Select or deselect a points model configuration."""
     try:
+        points_config_collection = g.league.collections.get('model_config_points', 'model_config_points_nba')
         data = request.json
         config_id = data.get('config_id')
-        
+
         if not config_id:
             return jsonify({
                 'success': False,
                 'error': 'config_id is required'
             }), 400
-        
+
         from bson import ObjectId
         # Check if this config is currently selected
-        current_config = db.model_config_points_nba.find_one({'_id': ObjectId(config_id)})
+        current_config = db[points_config_collection].find_one({'_id': ObjectId(config_id)})
         
         if not current_config:
             return jsonify({
@@ -4069,15 +4082,15 @@ def select_points_model_config(league_id=None):
         is_currently_selected = current_config.get('selected', False)
         
         # Unset all selected configs first (ensures only 0 or 1 selected)
-        db.model_config_points_nba.update_many(
+        db[points_config_collection].update_many(
             {'selected': True},
             {'$set': {'selected': False}}
         )
-        
+
         # If it was already selected, we're done (deselected it above)
         # If it wasn't selected, now select it
         if not is_currently_selected:
-            result = db.model_config_points_nba.update_one(
+            result = db[points_config_collection].update_one(
                 {'_id': ObjectId(config_id)},
                 {'$set': {'selected': True}}
             )
@@ -4107,7 +4120,6 @@ def select_points_model_config(league_id=None):
 def save_model_config(league_id=None):
     """
     Save model configuration from UI.
-    Creates/updates configs in model_config_nba collection.
     """
     try:
         config = request.json
@@ -4115,6 +4127,10 @@ def save_model_config(league_id=None):
         logging.basicConfig(level=logging.INFO)
         logger = logging.getLogger(__name__)
         logger.info(f"/api/model-config/save payload: {config}")
+
+        # Get league-aware collection names
+        classifier_config_collection = g.league.collections.get('model_config_classifier', 'model_config_nba')
+        points_config_collection = g.league.collections.get('model_config_points', 'model_config_points_nba')
 
         # Ensemble configs are saved during training, not via this endpoint
         # Return success to avoid frontend error - the actual save happens in train_ensemble_model
@@ -4198,7 +4214,7 @@ def save_model_config(league_id=None):
             try:
                 from bson import ObjectId
                 # Try to find the point prediction model config
-                points_config = db.model_config_points_nba.find_one({'_id': ObjectId(point_model_id)})
+                points_config = db[points_config_collection].find_one({'_id': ObjectId(point_model_id)})
                 if not points_config:
                     logger.warning(f"[DEPRECATED] Invalid point_model_id: {point_model_id}. Ignoring (use pred_margin from master CSV instead).")
                     point_model_id = None  # Clear invalid point_model_id
@@ -4258,7 +4274,7 @@ def save_model_config(league_id=None):
             logger.info(f"Model {model_type}: config_hash {config_hash} (best_c={best_c_value}, use_time_cal={use_time_calibration}, years={calibration_years}, injuries={include_injuries})")
 
             # Check if config exists by config_hash
-            existing = db.model_config_nba.find_one({'config_hash': config_hash})
+            existing = db[classifier_config_collection].find_one({'config_hash': config_hash})
 
             # Determine if this should be selected (first model type)
             is_selected = (idx == 0)
@@ -4292,9 +4308,9 @@ def save_model_config(league_id=None):
                 update_doc['selected'] = existing.get('selected', False) or is_selected
             else:
                 # New config: select if requested (first), otherwise select only if none exists
-                existing_selected = db.model_config_nba.find_one({'selected': True})
+                existing_selected = db[classifier_config_collection].find_one({'selected': True})
                 update_doc['selected'] = is_selected or (existing_selected is None)
-            
+
             # Preserve custom name if exists
             if existing and existing.get('name'):
                 existing_name = existing['name']
@@ -4311,25 +4327,25 @@ def save_model_config(league_id=None):
                 update_doc['trained_at'] = datetime.utcnow()
             
             # Upsert
-            result = db.model_config_nba.update_one(
+            result = db[classifier_config_collection].update_one(
                 {'config_hash': config_hash},
                 {'$set': update_doc},
                 upsert=True
             )
-            
+
             # Get document ID
             if result.upserted_id:
                 doc_id = str(result.upserted_id)
                 logger.info(f"Inserted new config: _id={doc_id}")
             else:
-                doc = db.model_config_nba.find_one({'config_hash': config_hash})
+                doc = db[classifier_config_collection].find_one({'config_hash': config_hash})
                 doc_id = str(doc['_id'])
                 logger.info(f"Updated existing config: _id={doc_id}")
 
             # If this config should be selected, now safely unselect others (excluding this doc)
             if update_doc.get('selected', False) and is_selected and doc_id:
                 try:
-                    db.model_config_nba.update_many(
+                    db[classifier_config_collection].update_many(
                         {'_id': {'$ne': ObjectId(doc_id)}, 'selected': True},
                         {'$set': {'selected': False}}
                     )
@@ -4872,7 +4888,8 @@ def create_ensemble(league_id=None):
         from bson import ObjectId
         import logging
         logger = logging.getLogger(__name__)
-        
+        classifier_config_collection = g.league.collections.get('model_config_classifier', 'model_config_nba')
+
         data = request.json
         if not data:
             return jsonify({
@@ -4895,7 +4912,7 @@ def create_ensemble(league_id=None):
         # Validate that all ensemble models exist
         base_models = []
         for model_id in ensemble_models:
-            model_config = db.model_config_nba.find_one({'_id': ObjectId(model_id)})
+            model_config = db[classifier_config_collection].find_one({'_id': ObjectId(model_id)})
             if not model_config:
                 return jsonify({
                     'success': False,
@@ -4908,7 +4925,7 @@ def create_ensemble(league_id=None):
                     'error': f'Cannot include ensemble model {model_id} in another ensemble'
                 }), 400
             base_models.append(model_config)
-        
+
         # Rule 1: Validate base model time configs match (comprehensive validation)
         ref_config = base_models[0]
         required_time_keys = ['use_time_calibration', 'begin_year', 'calibration_years', 'evaluation_year']
@@ -5000,16 +5017,16 @@ def create_ensemble(league_id=None):
 
         # Check for existing ensemble config first
         # First try to find by config_hash, then fallback to matching ensemble_models
-        existing_ensemble = db.model_config_nba.find_one({'config_hash': ensemble_config['config_hash']})
+        existing_ensemble = db[classifier_config_collection].find_one({'config_hash': ensemble_config['config_hash']})
         if not existing_ensemble:
             # Fallback: find by ensemble_models (handles old hash format)
-            existing_ensemble = db.model_config_nba.find_one({
+            existing_ensemble = db[classifier_config_collection].find_one({
                 'ensemble': True,
                 'ensemble_models': ensemble_models
             })
             if existing_ensemble:
                 # Update the old config's hash to the new format
-                db.model_config_nba.update_one(
+                db[classifier_config_collection].update_one(
                     {'_id': existing_ensemble['_id']},
                     {'$set': {'config_hash': ensemble_config['config_hash']}}
                 )
@@ -5017,14 +5034,14 @@ def create_ensemble(league_id=None):
         if existing_ensemble:
             ensemble_id = str(existing_ensemble['_id'])
             # Update existing config
-            db.model_config_nba.update_one(
+            db[classifier_config_collection].update_one(
                 {'_id': existing_ensemble['_id']},
                 {'$set': {'updated_at': datetime.utcnow()}}
             )
             logger.info(f"Found existing ensemble {ensemble_id} with {len(ensemble_models)} base models")
         else:
             # Insert new ensemble config
-            result = db.model_config_nba.insert_one(ensemble_config)
+            result = db[classifier_config_collection].insert_one(ensemble_config)
             ensemble_id = str(result.inserted_id)
             logger.info(f"Created ensemble {ensemble_id} with {len(ensemble_models)} base models")
 
@@ -5060,11 +5077,12 @@ def create_ensemble(league_id=None):
 def download_model_config_training_csv(config_id, league_id=None):
     """Download the training CSV associated with a model config."""
     try:
+        classifier_config_collection = g.league.collections.get('model_config_classifier', 'model_config_nba')
         try:
             oid = ObjectId(config_id)
         except Exception:
             return jsonify({'success': False, 'error': 'Invalid config_id'}), 400
-        doc = db.model_config_nba.find_one({'_id': oid})
+        doc = db[classifier_config_collection].find_one({'_id': oid})
         if not doc:
             return jsonify({'success': False, 'error': 'Config not found'}), 404
         csv_path = doc.get('training_csv')
@@ -5092,7 +5110,7 @@ def download_model_config_training_csv(config_id, league_id=None):
             if not new_path:
                 return jsonify({'success': False, 'error': f'Training CSV not found on disk: {csv_path}'}), 404
             # Persist corrected path
-            db.model_config_nba.update_one({'_id': doc['_id']}, {'$set': {'training_csv': new_path}})
+            db[classifier_config_collection].update_one({'_id': doc['_id']}, {'$set': {'training_csv': new_path}})
             csv_path = new_path
         filename = os.path.basename(csv_path)
         return send_file(csv_path, as_attachment=True, download_name=filename)
@@ -5100,84 +5118,8 @@ def download_model_config_training_csv(config_id, league_id=None):
         import traceback
         return jsonify({'success': False, 'error': str(e), 'traceback': traceback.format_exc()}), 500
 
-def create_job(config_id: str, job_type: str = 'train') -> str:
-    """
-    Create a new job in MongoDB.
-    
-    Args:
-        config_id: The model config ID this job is associated with
-        job_type: Type of job ('train' for now)
-        
-    Returns:
-        Job ID as string
-    """
-    # Cancel any existing running jobs for this config
-    db.jobs_nba.update_many(
-        {'config_id': config_id, 'status': 'running'},
-        {'$set': {'status': 'failed', 'error': 'Cancelled by new job', 'updated_at': datetime.utcnow()}}
-    )
-    
-    job_doc = {
-        'config_id': config_id,
-        'type': job_type,
-        'progress': 0,
-        'status': 'running',
-        'error': None,
-        'message': 'Initializing training...',
-        'created_at': datetime.utcnow(),
-        'updated_at': datetime.utcnow()
-    }
-    
-    result = db.jobs_nba.insert_one(job_doc)
-    return str(result.inserted_id)
-
-
-def update_job_progress(job_id: str, progress: int, message: str = None):
-    """
-    Update job progress and message.
-    
-    Args:
-        job_id: Job ID
-        progress: Progress percentage (0-100)
-        message: Optional status message
-    """
-    update_doc = {
-        'progress': max(0, min(100, progress)),
-        'updated_at': datetime.utcnow()
-    }
-    if message:
-        update_doc['message'] = message
-    
-    db.jobs_nba.update_one(
-        {'_id': ObjectId(job_id)},
-        {'$set': update_doc}
-    )
-
-
-def complete_job(job_id: str, message: str = 'Training completed successfully'):
-    """Mark job as completed."""
-    db.jobs_nba.update_one(
-        {'_id': ObjectId(job_id)},
-        {'$set': {
-            'status': 'completed',
-            'progress': 100,
-            'message': message,
-            'updated_at': datetime.utcnow()
-        }}
-    )
-
-
-def fail_job(job_id: str, error: str, message: str = None):
-    """Mark job as failed with error message."""
-    db.jobs_nba.update_one(
-        {'_id': ObjectId(job_id)},
-        {'$set': {
-            'status': 'failed',
-            'error': error,
-            'message': message or f'Training failed: {error}',
-            'updated_at': datetime.utcnow()
-        }}
-    )
+# Job helper functions — delegate to core/services/jobs.py (league-aware)
+from nba_app.core.services.jobs import create_job, update_job_progress, complete_job, fail_job
 
 
 @app.route('/<league_id>/api/jobs/<job_id>', methods=['GET'])
@@ -5279,8 +5221,8 @@ def resolve_feature_dependencies(league_id=None):
         all_features = [c for c in df.columns if c not in metadata_cols]
         
         # Find matching features by substring
-        from nba_app.cli_old.populate_master_training_cols import find_features_by_substrings
-        
+        from nba_app.core.features.sets import find_features_by_substrings
+
         if not feature_substrings or len(feature_substrings) == 0:
             # Empty filter = regenerate all features
             requested_features = all_features
@@ -5357,8 +5299,8 @@ def regenerate_master_features(league_id=None):
         all_csv_features = [c for c in df.columns if c not in metadata_cols]
         
         # Find matching features
-        from nba_app.cli_old.populate_master_training_cols import find_features_by_substrings
-        
+        from nba_app.core.features.sets import find_features_by_substrings
+
         if not feature_substrings or len(feature_substrings) == 0:
             # Empty filter = regenerate all features
             requested_features = all_csv_features
@@ -5381,30 +5323,18 @@ def regenerate_master_features(league_id=None):
         categorized = categorize_features(requested_features, all_to_regenerate)
         
         # Create job (no config_id for feature regeneration jobs)
-        job_doc = {
-            'config_id': None,  # Not associated with a model config
-            'type': 'regenerate_features',
-            'progress': 0,
-            'status': 'running',
-            'error': None,
-            'message': 'Starting feature regeneration...',
-            'metadata': {
-                'feature_substrings': feature_substrings,
-                'requested_features': categorized['requested'],
-                'all_features': categorized['all'],
-                'dependencies': categorized['dependencies']
-            },
-            'created_at': datetime.utcnow(),
-            'updated_at': datetime.utcnow()
-        }
-        
-        result = db.jobs_nba.insert_one(job_doc)
-        job_id = str(result.inserted_id)
-        
+        league = g.league
+        job_id = create_job('regenerate_features', league=league, metadata={
+            'feature_substrings': feature_substrings,
+            'requested_features': categorized['requested'],
+            'all_features': categorized['all'],
+            'dependencies': categorized['dependencies']
+        })
+
         # Spawn subprocess (non-blocking)
         script_path = os.path.join(os.path.dirname(__file__), '..', 'cli', 'populate_master_training_cols.py')
         python_exe = _get_venv_python_executable()
-        
+
         cmd = [
             python_exe,
             script_path,
@@ -5414,12 +5344,12 @@ def regenerate_master_features(league_id=None):
             '--job-id', job_id,
             '--chunk-size', '1000'
         ]
-        
+
         try:
-            _spawn_master_training_job(cmd, job_id=job_id, job_type='regenerate_features')
+            _spawn_master_training_job(cmd, job_id=job_id, job_type='regenerate_features', league=league)
         except Exception as e:
             # If subprocess fails to start, mark job as failed
-            fail_job(job_id, f"Failed to start regeneration process: {str(e)}")
+            fail_job(job_id, f"Failed to start regeneration process: {str(e)}", league=league)
             return jsonify({
                 'success': False,
                 'error': f'Failed to start regeneration process: {str(e)}'
@@ -5444,7 +5374,7 @@ def regenerate_master_features(league_id=None):
 def get_possible_features(league_id=None):
     """Get list of all possible features that can be generated."""
     try:
-        from nba_app.cli_old.master_training_data import get_all_possible_features
+        from nba_app.core.services.training_data import get_all_possible_features
         features = get_all_possible_features(no_player=False)
         return jsonify({
             'success': True,
@@ -5550,7 +5480,7 @@ def add_master_columns(league_id=None):
             }), 400
         
         # Get all possible features to validate
-        from nba_app.cli_old.master_training_data import get_all_possible_features
+        from nba_app.core.services.training_data import get_all_possible_features
         all_possible = set(get_all_possible_features(no_player=False))
         unknown_features = [f for f in feature_names if f not in all_possible]
         if unknown_features:
@@ -5560,27 +5490,15 @@ def add_master_columns(league_id=None):
             }), 400
         
         # Create job
-        job_doc = {
-            'config_id': None,
-            'type': 'add_features',
-            'progress': 0,
-            'status': 'running',
-            'error': None,
-            'message': 'Starting column addition...',
-            'metadata': {
-                'feature_names': feature_names
-            },
-            'created_at': datetime.utcnow(),
-            'updated_at': datetime.utcnow()
-        }
-        
-        result = db.jobs_nba.insert_one(job_doc)
-        job_id = str(result.inserted_id)
-        
+        league = g.league
+        job_id = create_job('add_features', league=league, metadata={
+            'feature_names': feature_names
+        })
+
         # Spawn subprocess (non-blocking)
         script_path = os.path.join(os.path.dirname(__file__), '..', 'cli', 'populate_master_training_cols.py')
         python_exe = _get_venv_python_executable()
-        
+
         cmd = [
             python_exe,
             script_path,
@@ -5589,11 +5507,11 @@ def add_master_columns(league_id=None):
             '--job-id', job_id,
             '--chunk-size', '1000'
         ]
-        
+
         try:
-            _spawn_master_training_job(cmd, job_id=job_id, job_type='add_features')
+            _spawn_master_training_job(cmd, job_id=job_id, job_type='add_features', league=league)
         except Exception as e:
-            fail_job(job_id, f"Failed to start column addition process: {str(e)}")
+            fail_job(job_id, f"Failed to start column addition process: {str(e)}", league=league)
             return jsonify({
                 'success': False,
                 'error': f'Failed to start column addition process: {str(e)}'
@@ -5771,11 +5689,13 @@ def run_training_job(
     include_injuries: bool = False,
     recency_decay_k: float = None,
     min_games_played: int = 15,
-    point_model_id: str = None
+    point_model_id: str = None,
+    classifier_config_collection: str = 'model_config_nba',
+    league=None
 ):
     """
     Run training job using unified infrastructure.
-    
+
     Args:
         job_id: Job identifier for progress tracking
         config_id: Configuration ID
@@ -5799,7 +5719,7 @@ def run_training_job(
     logger = logging.getLogger(__name__)
     
     try:
-        update_job_progress(job_id, 1, 'Initializing training...')
+        update_job_progress(job_id, 1, 'Initializing training...', league=league)
         
         # Create configuration using unified manager
         config_data = {
@@ -5818,7 +5738,7 @@ def run_training_job(
         }
         
         # Use unified business logic for training
-        update_job_progress(job_id, 10, 'Training models...')
+        update_job_progress(job_id, 10, 'Training models...', league=league)
 
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
 
@@ -5834,7 +5754,7 @@ def run_training_job(
         include_era_normalization = inferred_flags.get('include_era_normalization', False)
 
         if use_master:
-            from nba_app.cli_old.master_training_data import (
+            from nba_app.core.services.training_data import (
                 extract_features_from_master,
                 check_master_needs_regeneration,
                 generate_master_training_data,
@@ -5889,7 +5809,7 @@ def run_training_job(
         else:
             # Create training data from scratch (original logic)
             # Initialize model with inferred flags
-            update_job_progress(job_id, 2, 'Initializing NBAModel...')
+            update_job_progress(job_id, 2, 'Initializing NBAModel...', league=league)
             model = NBAModel(
                 classifier_features=get_default_classifier_features(),
                 points_features=get_default_points_features(),
@@ -5904,7 +5824,7 @@ def run_training_job(
             # Step 1: Create training data
             # Elo generation and game processing takes ~85% of total progress (1-90%)
             # Map game processing progress (0-100%) to overall progress (1-90%)
-            update_job_progress(job_id, 1, 'Generating Elo ratings and processing games (this may take several minutes)...')
+            update_job_progress(job_id, 1, 'Generating Elo ratings and processing games (this may take several minutes)...', league=league)
             
             # Create progress callback that maps game processing progress to overall progress
             def game_progress_callback(current, total, game_progress_pct):
@@ -5912,7 +5832,7 @@ def run_training_job(
                 # This covers Elo generation + game processing
                 overall_progress = 1 + int((game_progress_pct / 100) * 89)  # 1-90%
                 message = f'Processing games: {current}/{total} ({game_progress_pct:.1f}%)'
-                update_job_progress(job_id, overall_progress, message)
+                update_job_progress(job_id, overall_progress, message, league=league)
             
             if not include_per_features:
                 clf_csv_path = os.path.join(model.output_dir, f'classifier_training_no_per_{timestamp}.csv')
@@ -5948,10 +5868,10 @@ def run_training_job(
                     raise
         
         # Elo generation and training data creation complete - update to 90%
-        update_job_progress(job_id, 90, 'Training data created, processing features...')
+        update_job_progress(job_id, 90, 'Training data created, processing features...', league=league)
         
         # Step 2: Load and filter data (90-91%)
-        update_job_progress(job_id, 90, 'Loading and filtering data...')
+        update_job_progress(job_id, 90, 'Loading and filtering data...', league=league)
         df = pd.read_csv(clf_csv)
         logger.info(f"Loaded CSV with shape: {df.shape}")
         
@@ -6108,7 +6028,7 @@ def run_training_job(
         X_scaled = scaler.fit_transform(X)
         
         # Step 2.5: Rate features (91-92%)
-        update_job_progress(job_id, 91, 'Rating features (ANOVA F-scores)...')
+        update_job_progress(job_id, 91, 'Rating features (ANOVA F-scores)...', league=league)
         from sklearn.feature_selection import SelectKBest, f_classif
         from sklearn.model_selection import train_test_split
         
@@ -6126,7 +6046,7 @@ def run_training_job(
         ]
         
         # Step 3: Evaluate all model/C-value combinations (92-99%)
-        update_job_progress(job_id, 92, 'Evaluating model configurations...')
+        update_job_progress(job_id, 92, 'Evaluating model configurations...', league=league)
         results = []
         
         total_combos = 0
@@ -6142,7 +6062,7 @@ def run_training_job(
                 for c_val in c_values:
                     combo_num += 1
                     progress = 92 + int((combo_num / total_combos) * 7)  # 92-99%
-                    update_job_progress(job_id, progress, f'Evaluating {model_type} (C={c_val})... [{combo_num}/{total_combos}]')
+                    update_job_progress(job_id, progress, f'Evaluating {model_type} (C={c_val})... [{combo_num}/{total_combos}]', league=league)
                     
                     if use_time_calibration:
                         result = evaluate_model_combo_with_calibration(
@@ -6160,7 +6080,7 @@ def run_training_job(
             else:
                 combo_num += 1
                 progress = 92 + int((combo_num / total_combos) * 7)  # 92-99%
-                update_job_progress(job_id, progress, f'Evaluating {model_type}... [{combo_num}/{total_combos}]')
+                update_job_progress(job_id, progress, f'Evaluating {model_type}... [{combo_num}/{total_combos}]', league=league)
                 
                 if use_time_calibration:
                     result = evaluate_model_combo_with_calibration(
@@ -6194,7 +6114,7 @@ def run_training_job(
         save_model_cache(cache, no_per=not include_per_features)
         
         # Step 5: Auto-save to MongoDB (99-100%)
-        update_job_progress(job_id, 99, 'Saving results to MongoDB...')
+        update_job_progress(job_id, 99, 'Saving results to MongoDB...', league=league)
         feature_set_hash = generate_feature_set_hash(feature_cols)
         
         # Group results by model_type
@@ -6299,7 +6219,8 @@ def run_training_job(
                     use_master=use_master,
                     min_games_played=min_games_played,
                     point_model_id=point_model_id,
-                    feature_importance_rankings=importance_rankings
+                    feature_importance_rankings=importance_rankings,
+                    config_collection=classifier_config_collection
                 )
                 saved_config_ids.append(saved_config_id)
                 logger.info(f"Saved {model_type} config to MongoDB (ID: {saved_config_id})")
@@ -6314,7 +6235,8 @@ def run_training_job(
                         scaler=scaler,
                         feature_names=feature_cols,
                         run_id=run_id,
-                        config_id=saved_config_id
+                        config_id=saved_config_id,
+                        config_collection=classifier_config_collection
                     )
                     if artifact_result.get('success'):
                         logger.info(f"✅ Saved model artifacts for {model_type} (run_id: {run_id})")
@@ -6331,26 +6253,26 @@ def run_training_job(
             if saved_config_ids:
                 primary_id = saved_config_ids[0]
                 # Set this saved config as selected
-                db.model_config_nba.update_one(
+                db[classifier_config_collection].update_one(
                     {'_id': ObjectId(primary_id)},
                     {'$set': {'selected': True, 'updated_at': datetime.utcnow()}}
                 )
                 # Unselect all others
-                db.model_config_nba.update_many(
+                db[classifier_config_collection].update_many(
                     {'_id': {'$ne': ObjectId(primary_id)}, 'selected': True},
                     {'$set': {'selected': False}}
                 )
         except Exception:
             pass
 
-        complete_job(job_id, f'Training completed successfully. Saved {len(saved_config_ids)} model configuration(s).')
+        complete_job(job_id, f'Training completed successfully. Saved {len(saved_config_ids)} model configuration(s).', league=league)
         logger.info(f"Training job {job_id} completed successfully")
         
     except Exception as e:
         import traceback
         error_trace = traceback.format_exc()
         logger.error(f"Error in training job {job_id}: {str(e)}\n{error_trace}")
-        fail_job(job_id, str(e), f'Training failed: {str(e)}')
+        fail_job(job_id, str(e), f'Training failed: {str(e)}', league=league)
 
 
 @app.route('/<league_id>/api/model-config/train', methods=['POST'])
@@ -6363,14 +6285,19 @@ def train_model_config(league_id=None):
     import logging
     logging.basicConfig(level=logging.INFO)
     logger = logging.getLogger(__name__)
-    
+
+    # Get league-aware collection name (capture before spawning thread since g is request-scoped)
+    league = g.league
+    classifier_config_collection = league.collections.get('model_config_classifier', 'model_config_nba')
+    points_config_collection = league.collections.get('model_config_points', 'model_config_points_nba')
+
     try:
         config = request.json
         logger.info(f"Received training request: {config}")
-        
+
         # Check if this is an ensemble training request
         if config.get('ensemble', False):
-            return train_ensemble_model(config)
+            return train_ensemble_model(config, classifier_config_collection=classifier_config_collection, league=league)
         
         # Extract configuration for regular models
         model_types = config.get('model_types', DEFAULT_MODEL_TYPES)
@@ -6458,7 +6385,7 @@ def train_model_config(league_id=None):
             try:
                 from bson import ObjectId
                 # Try to find the point prediction model config
-                points_config = db.model_config_points_nba.find_one({'_id': ObjectId(point_model_id)})
+                points_config = db[points_config_collection].find_one({'_id': ObjectId(point_model_id)})
                 if not points_config:
                     logger.warning(f"[DEPRECATED] point_model_id {point_model_id} not found. Ignoring (use pred_margin from master CSV instead).")
                     point_model_id = None  # Clear invalid point_model_id
@@ -6467,7 +6394,7 @@ def train_model_config(league_id=None):
             except Exception as e:
                 logger.warning(f"[DEPRECATED] Invalid point_model_id format: {point_model_id}. Ignoring (use pred_margin from master CSV instead). Error: {str(e)}")
                 point_model_id = None  # Clear invalid point_model_id
-        
+
         logger.info(f"Model types: {model_types}, C-values: {c_values}, Feature sets: {feature_sets}, Features: {len(features)}")
         logger.info(f"Time-based calibration: {use_time_calibration}, Method: {calibration_method}, Begin year: {begin_year}, Calibration years: {calibration_years}, Eval year: {evaluation_year}")
         
@@ -6506,7 +6433,7 @@ def train_model_config(league_id=None):
         )
         
         # Find or create config document
-        existing_config = db.model_config_nba.find_one({'config_hash': config_hash})
+        existing_config = db[classifier_config_collection].find_one({'config_hash': config_hash})
         if existing_config:
             config_id = str(existing_config['_id'])
         else:
@@ -6531,13 +6458,13 @@ def train_model_config(league_id=None):
             # Add point_model_id if provided
             if point_model_id:
                 placeholder_config['point_model_id'] = point_model_id
-            result = db.model_config_nba.insert_one(placeholder_config)
+            result = db[classifier_config_collection].insert_one(placeholder_config)
             config_id = str(result.inserted_id)
         
         # Create job
-        job_id = create_job(config_id, 'train')
+        job_id = create_job('train', league=league, config_id=config_id)
         logger.info(f"Created job {job_id} for config {config_id}")
-        
+
         # Start training in background thread
         training_thread = threading.Thread(
             target=run_training_job,
@@ -6557,7 +6484,9 @@ def train_model_config(league_id=None):
                 include_injuries,
                 recency_decay_k,
                 min_games_played,
-                point_model_id
+                point_model_id,
+                classifier_config_collection,
+                league
             ),
             daemon=True
         )
@@ -6578,13 +6507,14 @@ def train_model_config(league_id=None):
         return jsonify({'success': False, 'error': str(e), 'traceback': error_trace}), 500
 
 
-def train_ensemble_model(config):
+def train_ensemble_model(config, classifier_config_collection: str = 'model_config_nba', league=None):
     """
     Train ensemble meta-model using stacking trainer.
-    
+
     Args:
         config: Dictionary containing ensemble training configuration
-        
+        classifier_config_collection: League-aware collection name
+
     Returns:
         JSON response with job_id for async training
     """
@@ -6616,14 +6546,14 @@ def train_ensemble_model(config):
         from bson import ObjectId
         base_models = []
         for model_id in ensemble_models:
-            model_config = db.model_config_nba.find_one({'_id': ObjectId(model_id)})
+            model_config = db[classifier_config_collection].find_one({'_id': ObjectId(model_id)})
             if not model_config:
                 return jsonify({
                     'success': False,
                     'error': f'Model config {model_id} not found'
                 }), 404
             base_models.append(model_config)
-        
+
         # Get time-based calibration config from first base model
         ref_config = base_models[0]
 
@@ -6666,17 +6596,17 @@ def train_ensemble_model(config):
         
         # Insert or update ensemble config
         # First try to find by config_hash, then fallback to matching ensemble_models + model_type
-        existing_ensemble = db.model_config_nba.find_one({'config_hash': ensemble_config['config_hash']})
+        existing_ensemble = db[classifier_config_collection].find_one({'config_hash': ensemble_config['config_hash']})
         if not existing_ensemble:
             # Fallback: find by ensemble_models and model_type (handles old hash format)
-            existing_ensemble = db.model_config_nba.find_one({
+            existing_ensemble = db[classifier_config_collection].find_one({
                 'ensemble': True,
                 'ensemble_models': ensemble_models,
                 'model_type': meta_model_type
             })
             if existing_ensemble:
                 # Update the old config's hash to the new format
-                db.model_config_nba.update_one(
+                db[classifier_config_collection].update_one(
                     {'_id': existing_ensemble['_id']},
                     {'$set': {'config_hash': ensemble_config['config_hash']}}
                 )
@@ -6684,7 +6614,7 @@ def train_ensemble_model(config):
         if existing_ensemble:
             config_id = str(existing_ensemble['_id'])
             # Update existing config
-            db.model_config_nba.update_one(
+            db[classifier_config_collection].update_one(
                 {'_id': ObjectId(config_id)},
                 {'$set': {
                     'updated_at': datetime.utcnow(),
@@ -6693,13 +6623,13 @@ def train_ensemble_model(config):
             )
         else:
             # Insert new config
-            result = db.model_config_nba.insert_one(ensemble_config)
+            result = db[classifier_config_collection].insert_one(ensemble_config)
             config_id = str(result.inserted_id)
         
         # Create job for ensemble training
-        job_id = create_job(config_id, 'train')
+        job_id = create_job('train', league=league, config_id=config_id)
         logger.info(f"Created ensemble training job {job_id} for config {config_id}")
-        
+
         # Start ensemble training in background thread
         ensemble_training_thread = threading.Thread(
             target=run_ensemble_training_job,
@@ -6712,7 +6642,9 @@ def train_ensemble_model(config):
                 ensemble_meta_features,
                 ensemble_use_disagree,
                 ensemble_use_conf,
-                time_config
+                time_config,
+                classifier_config_collection,
+                league
             ),
             daemon=True
         )
@@ -6742,7 +6674,9 @@ def run_ensemble_training_job(
     ensemble_meta_features: list,
     ensemble_use_disagree: bool,
     ensemble_use_conf: bool,
-    time_config: dict
+    time_config: dict,
+    classifier_config_collection: str = 'model_config_nba',
+    league=None
 ):
     """
     Run ensemble training job asynchronously with progress updates.
@@ -6752,13 +6686,13 @@ def run_ensemble_training_job(
     logger = logging.getLogger(__name__)
     
     try:
-        update_job_progress(job_id, 1, 'Initializing ensemble training...')
+        update_job_progress(job_id, 1, 'Initializing ensemble training...', league=league)
         
         # Import required modules
         from nba_app.agents.modeler.modeler_agent import ModelerAgent
         import uuid
         
-        update_job_progress(job_id, 5, 'Loading base models...')
+        update_job_progress(job_id, 5, 'Loading base models...', league=league)
         
         # Create modeler agent session for ensemble training
         session_id = str(uuid.uuid4())
@@ -6773,7 +6707,7 @@ def run_ensemble_training_job(
             'use_master': True
         }
         
-        update_job_progress(job_id, 10, 'Training ensemble meta-model...')
+        update_job_progress(job_id, 10, 'Training ensemble meta-model...', league=league)
         
         # Determine stacking mode based on meta features
         use_any_meta = ensemble_use_disagree or ensemble_use_conf or len(ensemble_meta_features) > 0
@@ -6795,7 +6729,7 @@ def run_ensemble_training_job(
             use_conf=ensemble_use_conf
         )
         
-        update_job_progress(job_id, 90, 'Finalizing ensemble model...')
+        update_job_progress(job_id, 90, 'Finalizing ensemble model...', league=league)
         
         if result and 'run_id' in result:
             # Update ensemble config with training results
@@ -6843,24 +6777,24 @@ def run_ensemble_training_job(
                 if artifacts.get('ensemble_config_path'):
                     ensemble_update['ensemble_config_path'] = artifacts['ensemble_config_path']
 
-            db.model_config_nba.update_one(
+            db[classifier_config_collection].update_one(
                 {'_id': ObjectId(config_id)},
                 {'$set': ensemble_update}
             )
-            
-            complete_job(job_id, f'Ensemble training completed successfully')
+
+            complete_job(job_id, f'Ensemble training completed successfully', league=league)
             logger.info(f"Ensemble training completed: {result['run_id']}")
             
         else:
             error_msg = f"Ensemble training failed: {result}"
-            fail_job(job_id, error_msg)
+            fail_job(job_id, error_msg, league=league)
             logger.error(error_msg)
-            
+
     except Exception as e:
         import traceback
         error_trace = traceback.format_exc()
         error_msg = f'Ensemble training failed: {str(e)}'
-        fail_job(job_id, error_msg)
+        fail_job(job_id, error_msg, league=league)
         logger.error(f"{error_msg}\n{error_trace}")
         traceback.print_exc()
 
@@ -6871,7 +6805,8 @@ def train_points_model(league_id=None):
     """Train a points regression model."""
     try:
         from nba_app.core.models import PointsRegressionTrainer
-        from nba_app.cli_old.points_regression_features import get_points_features_by_sets
+        from nba_app.core.features.sets import get_features_by_sets
+        points_config_collection = g.league.collections.get('model_config_points', 'model_config_points_nba')
         
         config = request.json
         model_type = config.get('model_type', 'Ridge')
@@ -6990,16 +6925,16 @@ def train_points_model(league_id=None):
         
         # If feature sets are specified, get features from sets
         if feature_sets and not features:
-            features = get_points_features_by_sets(feature_sets)
+            features = get_features_by_sets(feature_sets)
         # If both are specified, combine (features take precedence)
         elif feature_sets and features:
-            set_features = get_points_features_by_sets(feature_sets)
+            set_features = get_features_by_sets(feature_sets)
             # Merge, keeping individual features
             all_features = list(set(set_features + features))
             features = all_features
         
         # Use master training data if available (same master CSV as classifiers)
-        from nba_app.cli_old.master_training_data import (
+        from nba_app.core.services.training_data import (
             extract_features_from_master_for_points,
             check_master_needs_regeneration,
             get_master_training_metadata,
@@ -7123,7 +7058,7 @@ def train_points_model(league_id=None):
         report_path = trainer.generate_diagnostics(training_results)
         
         # Save config to MongoDB
-        from nba_app.cli_old.points_regression_features import generate_feature_set_hash
+        # generate_feature_set_hash is defined locally in this file (line ~660)
         import hashlib
         
         # Use all features if none selected
@@ -7222,7 +7157,7 @@ def train_points_model(league_id=None):
             config_doc['alphas_tested'] = alphas_tested
         
         # Check if config exists
-        existing = db.model_config_points_nba.find_one({'config_hash': config_hash})
+        existing = db[points_config_collection].find_one({'config_hash': config_hash})
         
         if existing and existing.get('name'):
             # Preserve custom name
@@ -7237,24 +7172,24 @@ def train_points_model(league_id=None):
         
         # Set selected flag (first config becomes selected)
         if not existing:
-            existing_selected = db.model_config_points_nba.find_one({'selected': True})
+            existing_selected = db[points_config_collection].find_one({'selected': True})
             config_doc['selected'] = (existing_selected is None)
             config_doc['trained_at'] = datetime.utcnow()
         else:
             config_doc['selected'] = existing.get('selected', False)
         
         # Upsert config
-        result = db.model_config_points_nba.update_one(
+        result = db[points_config_collection].update_one(
             {'config_hash': config_hash},
             {'$set': config_doc},
             upsert=True
         )
-        
+
         # Get document ID
         if result.upserted_id:
             config_id = str(result.upserted_id)
         else:
-            doc = db.model_config_points_nba.find_one({'config_hash': config_hash})
+            doc = db[points_config_collection].find_one({'config_hash': config_hash})
             config_id = str(doc['_id'])
         
         # Sanitize training_results to remove non-serializable model objects
@@ -7967,7 +7902,8 @@ def create_matchup_chat_session(league_id=None):
                 pass
         
         # Get selected model config ID
-        selected_model_config = db.model_config_nba.find_one({'selected': True})
+        classifier_config_collection = g.league.collections.get('model_config_classifier', 'model_config_nba')
+        selected_model_config = db[classifier_config_collection].find_one({'selected': True})
         model_config_id = str(selected_model_config['_id']) if selected_model_config else None
         
         # Get season

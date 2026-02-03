@@ -297,7 +297,7 @@ def run_injuries_pipeline(
     mongo = Mongo()
 
     # Get league-specific database proxy
-    from nba_app.cli_old.espn_api import LeagueDbProxy
+    from nba_app.core.data.league_db_proxy import LeagueDbProxy
     db = LeagueDbProxy(mongo.db, league_config)
 
     # Create injury manager

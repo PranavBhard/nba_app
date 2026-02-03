@@ -57,7 +57,7 @@ def test_use_master_training_branch_no_nameerror() -> bool:
     fake_db = _FakeDB()
 
     # Patch Mongo before importing web.app because web.app creates Mongo() at import time.
-    with mock.patch('nba_app.cli_old.Mongo.Mongo', autospec=True) as MongoPatched:
+    with mock.patch('nba_app.core.mongo.Mongo', autospec=True) as MongoPatched:
         MongoPatched.return_value = SimpleNamespace(db=fake_db)
 
         if 'nba_app.web.app' in sys.modules:
@@ -92,12 +92,16 @@ def test_use_master_training_branch_no_nameerror() -> bool:
             return output_path
 
         # Patch the imported-in-function module symbols via sys.modules trick:
-        # We patch the actual cli.master_training_data module functions/constants.
-        import nba_app.cli_old.master_training_data as mtd
+        # We patch the actual core.services.training_data module functions/constants.
+        import nba_app.core.services.training_data as mtd
         mtd.MASTER_TRAINING_PATH = master_path
         mtd.generate_master_training_data = _fake_generate_master_training_data
         mtd.check_master_needs_regeneration = _fake_check_master_needs_regeneration
         mtd.extract_features_from_master = _fake_extract_features_from_master
+
+        # web/app.py now uses get_master_training_path() (reads league config)
+        # instead of MASTER_TRAINING_PATH directly — patch it to return the temp path.
+        web_app.get_master_training_path = lambda: master_path
 
         # Now call run_training_job with use_master=True. We expect it to proceed
         # past the master extraction step (no NameError).
