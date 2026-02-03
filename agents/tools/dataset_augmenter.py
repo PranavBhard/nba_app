@@ -15,8 +15,8 @@ parent_dir = os.path.dirname(os.path.dirname(os.path.dirname(script_dir)))
 if parent_dir not in sys.path:
     sys.path.insert(0, parent_dir)
 
-from nba_app.cli.Mongo import Mongo
-from nba_app.cli.master_training_data import MASTER_TRAINING_PATH
+from nba_app.core.mongo import Mongo
+from nba_app.core.services.training_data import MASTER_TRAINING_PATH
 
 
 class DatasetAugmenter:

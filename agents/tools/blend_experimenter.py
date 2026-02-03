@@ -17,9 +17,10 @@ parent_dir = os.path.dirname(os.path.dirname(os.path.dirname(script_dir)))
 if parent_dir not in sys.path:
     sys.path.insert(0, parent_dir)
 
-from nba_app.cli.Mongo import Mongo
-from nba_app.cli.NBAModel import NBAModel
-from nba_app.cli.train import create_model_with_c, read_csv_safe
+from nba_app.core.mongo import Mongo
+from nba_app.core.models.bball_model import BballModel
+from nba_app.core.data import GamesRepository
+from nba_app.cli_old.train import create_model_with_c, read_csv_safe
 
 
 class BlendExperimenter:
@@ -37,7 +38,10 @@ class BlendExperimenter:
             self.db = mongo.db
         else:
             self.db = db
-        
+
+        # Initialize repository
+        self._games_repo = GamesRepository(self.db)
+
         # Cache directory for blend variant CSVs
         self.cache_dir = os.path.join(parent_dir, 'model_output', 'blend_experiments')
         os.makedirs(self.cache_dir, exist_ok=True)
@@ -94,7 +98,7 @@ class BlendExperimenter:
         validated_weight_configs = []
         for wc in weight_configs:
             if 'blend_components' in wc:
-                # New format: multiple time periods with weights
+                # Multiple time periods with weights
                 components = wc['blend_components']
                 if not isinstance(components, list) or len(components) == 0:
                     raise ValueError(f"blend_components must be a non-empty list: {wc}")
@@ -145,11 +149,11 @@ class BlendExperimenter:
         # Build MongoDB query
         query = self._build_query(time_period)
         
-        # Initialize NBAModel to access StatHandlerV2
+        # Initialize BballModel to access StatHandlerV2
         # Use minimal features list since we're generating our own blend features
         # Need to preload data for StatHandlerV2 to calculate features properly
         classifier_features = []  # Empty - we'll calculate features manually
-        model = NBAModel(
+        model = BballModel(
             classifier_features=classifier_features,
             include_elo=False,
             include_per_features=False,
@@ -158,7 +162,7 @@ class BlendExperimenter:
         )
         
         # Fetch games
-        games = list(self.db.stats_nba.find(query).sort([('year', 1), ('month', 1), ('day', 1)]))
+        games = self._games_repo.find(query, sort=[('year', 1), ('month', 1), ('day', 1)])
         if len(games) == 0:
             raise ValueError(f"No games found for time period: {time_period}")
         

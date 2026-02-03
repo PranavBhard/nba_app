@@ -57,7 +57,7 @@ def test_use_master_training_branch_no_nameerror() -> bool:
     fake_db = _FakeDB()
 
     # Patch Mongo before importing web.app because web.app creates Mongo() at import time.
-    with mock.patch('nba_app.cli.Mongo.Mongo', autospec=True) as MongoPatched:
+    with mock.patch('nba_app.cli_old.Mongo.Mongo', autospec=True) as MongoPatched:
         MongoPatched.return_value = SimpleNamespace(db=fake_db)
 
         if 'nba_app.web.app' in sys.modules:
@@ -93,7 +93,7 @@ def test_use_master_training_branch_no_nameerror() -> bool:
 
         # Patch the imported-in-function module symbols via sys.modules trick:
         # We patch the actual cli.master_training_data module functions/constants.
-        import nba_app.cli.master_training_data as mtd
+        import nba_app.cli_old.master_training_data as mtd
         mtd.MASTER_TRAINING_PATH = master_path
         mtd.generate_master_training_data = _fake_generate_master_training_data
         mtd.check_master_needs_regeneration = _fake_check_master_needs_regeneration

@@ -34,7 +34,8 @@ from nba_app.agents.tools.matchup_predict import predict as predict_matchup
 from nba_app.agents.tools.player_stats_tools import get_player_stat, get_player_season_stats, get_player_last_stats, get_player_games_in_season
 from nba_app.agents.tools.game_tools import get_game, get_rosters, get_team_games, get_team_last_games
 from nba_app.agents.tools.code_executor import CodeExecutor
-from nba_app.cli.Mongo import Mongo
+from nba_app.core.mongo import Mongo
+from nba_app.core.utils import get_season_from_date
 from nba_app.agents.utils.json_compression import encode_message_content
 
 # Set up logger
@@ -42,39 +43,41 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 
 
-def get_season_from_date(game_date: date) -> str:
-    """Get NBA season string from date."""
-    if game_date.month > 8:  # Oct-Dec
-        return f"{game_date.year}-{game_date.year + 1}"
-    else:  # Jan-Jun
-        return f"{game_date.year - 1}-{game_date.year}"
-
-
 class MatchupAssistantAgent:
     """LangChain-based agent for NBA matchup analysis"""
-    
-    def __init__(self, session_id: str, game_id: str, db=None, llm=None):
+
+    def __init__(self, session_id: str, game_id: str, db=None, llm=None, league=None, league_id: str = "nba"):
         """
         Initialize MatchupAssistantAgent.
-        
+
         Args:
             session_id: Chat session identifier
             game_id: Game ID for the matchup
             db: MongoDB database instance (optional)
             llm: LangChain LLM instance (optional, will create if not provided)
+            league: LeagueConfig instance (optional)
+            league_id: League identifier string (default: "nba")
         """
         if db is None:
             mongo = Mongo()
             self.db = mongo.db
         else:
             self.db = db
-        
+
         self.session_id = session_id
         self.game_id = game_id
+        self.league = league
+        self.league_id = league_id
         self.code_executor = CodeExecutor(db=self.db)
-        
+
+        # Get games collection based on league config
+        if league:
+            games_collection = league.collections.get('games', 'stats_nba')
+        else:
+            games_collection = 'stats_nba'
+
         # Load game context
-        game_doc = self.db.stats_nba.find_one({'game_id': game_id})
+        game_doc = self.db[games_collection].find_one({'game_id': game_id})
         if not game_doc:
             raise ValueError(f"Game {game_id} not found")
         
@@ -152,9 +155,16 @@ class MatchupAssistantAgent:
         context_parts.append(f"**Game ID**: {self.game_id}\n")
         context_parts.append(f"**Date**: {self.game_date}\n")
         context_parts.append(f"**Season**: {self.season}\n\n")
-        
+
+        # Get league-aware collection names
+        games_coll = self.league.collections.get('games', 'stats_nba') if self.league else 'stats_nba'
+        teams_coll = self.league.collections.get('teams', 'teams_nba') if self.league else 'teams_nba'
+        rosters_coll = self.league.collections.get('rosters', 'nba_rosters') if self.league else 'nba_rosters'
+        players_coll = self.league.collections.get('players', 'players_nba') if self.league else 'players_nba'
+        model_config_coll = self.league.collections.get('model_config_classifier', 'model_config_nba') if self.league else 'model_config_nba'
+
         # Get pregame lines (market odds)
-        game_doc = self.db.stats_nba.find_one({'game_id': self.game_id})
+        game_doc = self.db[games_coll].find_one({'game_id': self.game_id})
         pregame_lines = game_doc.get('pregame_lines', {}) if game_doc else {}
         if pregame_lines:
             context_parts.append("**Market Odds (Pregame Lines)**:\n")
@@ -170,10 +180,10 @@ class MatchupAssistantAgent:
                 away_ml = pregame_lines['away_ml']
                 context_parts.append(f"- {self.away_team} Moneyline: {away_ml:+d}\n")
             context_parts.append("\n")
-        
+
         # Get team metadata
-        home_team_data = self.db.teams_nba.find_one({'abbreviation': self.home_team}) or {}
-        away_team_data = self.db.teams_nba.find_one({'abbreviation': self.away_team}) or {}
+        home_team_data = self.db[teams_coll].find_one({'abbreviation': self.home_team}) or {}
+        away_team_data = self.db[teams_coll].find_one({'abbreviation': self.away_team}) or {}
         
         context_parts.append("**Teams**:\n")
         if home_team_data.get('displayName'):
@@ -183,18 +193,18 @@ class MatchupAssistantAgent:
         context_parts.append("\n")
         
         # Get rosters
-        home_roster = self.db.nba_rosters.find_one({'season': self.season, 'team': self.home_team})
-        away_roster = self.db.nba_rosters.find_one({'season': self.season, 'team': self.away_team})
-        
+        home_roster = self.db[rosters_coll].find_one({'season': self.season, 'team': self.home_team})
+        away_roster = self.db[rosters_coll].find_one({'season': self.season, 'team': self.away_team})
+
         if home_roster:
             roster_list = home_roster.get('roster', [])
             player_ids = [str(p.get('player_id', '')) for p in roster_list]
-            players = list(self.db.players_nba.find(
+            players = list(self.db[players_coll].find(
                 {'player_id': {'$in': player_ids}},
                 {'player_id': 1, 'player_name': 1}
             ))
             player_map = {str(p.get('player_id', '')): p.get('player_name', '') for p in players}
-            
+
             context_parts.append(f"**{self.home_team} Roster** ({len(roster_list)} players):\n")
             for roster_entry in roster_list[:15]:  # Limit to first 15 for context size
                 player_id = str(roster_entry.get('player_id', ''))
@@ -203,16 +213,16 @@ class MatchupAssistantAgent:
                 injured = "⚠" if roster_entry.get('injured', False) else " "
                 context_parts.append(f"  {starter} {injured} {player_id}: {player_name}\n")
             context_parts.append("\n")
-        
+
         if away_roster:
             roster_list = away_roster.get('roster', [])
             player_ids = [str(p.get('player_id', '')) for p in roster_list]
-            players = list(self.db.players_nba.find(
+            players = list(self.db[players_coll].find(
                 {'player_id': {'$in': player_ids}},
                 {'player_id': 1, 'player_name': 1}
             ))
             player_map = {str(p.get('player_id', '')): p.get('player_name', '') for p in players}
-            
+
             context_parts.append(f"**{self.away_team} Roster** ({len(roster_list)} players):\n")
             for roster_entry in roster_list[:15]:  # Limit to first 15 for context size
                 player_id = str(roster_entry.get('player_id', ''))
@@ -221,9 +231,9 @@ class MatchupAssistantAgent:
                 injured = "⚠" if roster_entry.get('injured', False) else " "
                 context_parts.append(f"  {starter} {injured} {player_id}: {player_name}\n")
             context_parts.append("\n")
-        
+
         # Get selected model config
-        model_config = self.db.model_config_nba.find_one({'selected': True})
+        model_config = self.db[model_config_coll].find_one({'selected': True})
         if model_config:
             context_parts.append("**Selected Model Configuration**:\n")
             context_parts.append(f"- Model Type: {model_config.get('model_type', 'N/A')}\n")
@@ -254,7 +264,12 @@ class MatchupAssistantAgent:
         if not LANGCHAIN_AVAILABLE:
             return tools
         
-        # Create a wrapper for predict that includes game context
+        # Get league-aware collection names
+        games_coll = self.league.collections.get('games', 'stats_nba') if self.league else 'stats_nba'
+        player_stats_coll = self.league.collections.get('player_stats', 'stats_nba_players') if self.league else 'stats_nba_players'
+        rosters_coll = self.league.collections.get('rosters', 'nba_rosters') if self.league else 'nba_rosters'
+
+        # Create wrapper for predict that includes game context and league
         def predict_with_context(home: str = None, away: str = None, home_injuries: List[str] = None, away_injuries: List[str] = None, home_starters: List[str] = None, away_starters: List[str] = None) -> Dict:
             """Generate prediction for the matchup."""
             home_team = home or self.home_team
@@ -268,59 +283,96 @@ class MatchupAssistantAgent:
                 away_injuries=away_injuries or [],
                 home_starters=home_starters or [],
                 away_starters=away_starters or [],
-                db=self.db
+                db=self.db,
+                league=self.league,
+                games_collection=games_coll
             )
-        
+
         tools.append(StructuredTool.from_function(
             func=predict_with_context,
             name="predict",
-            description=f"Generate prediction for the matchup ({self.away_team} @ {self.home_team}). Takes optional home/away team abbreviations (defaults to current matchup), optional home_injuries (list of player IDs), optional away_injuries (list of player IDs), optional home_starters (list of player IDs), optional away_starters (list of player IDs). Returns prediction with win probabilities, odds, and point predictions."
+            description=f"Generate prediction for the matchup ({self.away_team} @ {self.home_team}). Takes optional home/away team abbreviations (defaults to current matchup), optional home_injuries (list of player IDs), optional away_injuries (list of player IDs), optional home_starters (list of player IDs), optional away_starters (list of player IDs). Returns prediction with win probabilities (home_win_prob, away_win_prob), MODEL-derived odds (model_home_odds, model_away_odds - these are NOT market odds), and point predictions (home_points_pred, away_points_pred)."
         ))
-        
+
+        # Create league-aware wrappers for player stats tools
+        def get_player_stat_wrapper(game_id: str, player_id: str) -> Dict:
+            """Get player statistics for a specific game."""
+            return get_player_stat(game_id, player_id, db=self.db, player_stats_collection=player_stats_coll)
+
+        def get_player_season_stats_wrapper(season: str, player_id: str) -> Dict:
+            """Get season averages for a player."""
+            return get_player_season_stats(season, player_id, db=self.db, player_stats_collection=player_stats_coll)
+
+        def get_player_last_stats_wrapper(N: int, player_id: str) -> List[Dict]:
+            """Get the last N games for a player."""
+            return get_player_last_stats(N, player_id, db=self.db, player_stats_collection=player_stats_coll)
+
+        def get_player_games_in_season_wrapper(season: str, player_id: str, team: str = None) -> List[str]:
+            """Get list of game IDs where a player played in a season."""
+            return get_player_games_in_season(season, player_id, team=team, db=self.db, player_stats_collection=player_stats_coll)
+
+        # Create league-aware wrappers for game tools
+        def get_game_wrapper(game_id: str) -> Dict:
+            """Get game information."""
+            return get_game(game_id, db=self.db, games_collection=games_coll)
+
+        def get_team_games_wrapper(team: str, season: str, before_date: str = None, home_only: bool = False, away_only: bool = False, limit: int = None) -> List[Dict]:
+            """Get games for a team in a season."""
+            return get_team_games(team, season, before_date=before_date, home_only=home_only, away_only=away_only, limit=limit, db=self.db, games_collection=games_coll)
+
+        def get_team_last_games_wrapper(N: int, team: str, season: str = None, before_date: str = None) -> List[Dict]:
+            """Get the last N games for a team."""
+            return get_team_last_games(N, team, season=season, before_date=before_date, db=self.db, games_collection=games_coll)
+
+        def get_rosters_wrapper(team: str, season: str = None) -> Dict:
+            """Get team roster."""
+            players_coll = self.league.collections.get('players', 'players_nba') if self.league else 'players_nba'
+            return get_rosters(team, season=season, db=self.db, rosters_collection=rosters_coll, players_collection=players_coll)
+
         tools.append(StructuredTool.from_function(
-            func=get_player_stat,
+            func=get_player_stat_wrapper,
             name="get_player_stat",
             description="Get player statistics for a specific game. Takes game_id and player_id. Returns player game stats."
         ))
-        
+
         tools.append(StructuredTool.from_function(
-            func=get_player_season_stats,
+            func=get_player_season_stats_wrapper,
             name="get_player_season_stats",
             description="Get season averages for a player. Takes season (YYYY-YYYY format) and player_id. Returns season statistics and averages."
         ))
-        
+
         tools.append(StructuredTool.from_function(
-            func=get_player_last_stats,
+            func=get_player_last_stats_wrapper,
             name="get_player_last_stats",
             description="Get the last N games for a player. Takes N (number of games) and player_id. Returns list of game statistics sorted by date descending (most recent first)."
         ))
-        
+
         tools.append(StructuredTool.from_function(
-            func=get_player_games_in_season,
+            func=get_player_games_in_season_wrapper,
             name="get_player_games_in_season",
             description="Get list of game IDs where a player played (stats.min > 0) in a season. Takes season (YYYY-YYYY format), player_id, optional team (abbreviation). Returns list of game IDs sorted by date ascending (oldest first). Use this to find which games a player participated in, then cross-reference with team games to calculate records with/without that player."
         ))
-        
+
         tools.append(StructuredTool.from_function(
-            func=get_game,
+            func=get_game_wrapper,
             name="get_game",
             description="Get game information. Takes game_id. Returns game details including teams, date, season, and outcome (if completed)."
         ))
-        
+
         tools.append(StructuredTool.from_function(
-            func=get_team_games,
+            func=get_team_games_wrapper,
             name="get_team_games",
             description="Get games for a team in a season. Takes team (abbreviation), season (YYYY-YYYY format), optional before_date (YYYY-MM-DD), optional home_only (bool), optional away_only (bool), optional limit (int). Returns list of games sorted by date descending (most recent first). Use this to answer questions about team records, home/away splits, or game history."
         ))
-        
+
         tools.append(StructuredTool.from_function(
-            func=get_team_last_games,
+            func=get_team_last_games_wrapper,
             name="get_team_last_games",
             description="Get the last N games for a team. Takes N (number of games), team (abbreviation), optional season (YYYY-YYYY format), optional before_date (YYYY-MM-DD). Returns list of last N games sorted by date descending (most recent first). Use this to answer questions like 'team's record in last 10 games', 'team's home record in last 5 games', etc."
         ))
-        
+
         tools.append(StructuredTool.from_function(
-            func=get_rosters,
+            func=get_rosters_wrapper,
             name="get_rosters",
             description="Get team roster. Takes team (abbreviation) and optional season (YYYY-YYYY format). Returns roster with player IDs, names, starter status, and injured status."
         ))

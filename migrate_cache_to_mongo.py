@@ -15,7 +15,7 @@ parent_dir = os.path.dirname(script_dir)
 if parent_dir not in sys.path:
     sys.path.insert(0, parent_dir)
 
-from nba_app.cli.Mongo import Mongo
+from nba_app.core.mongo import Mongo
 import pandas as pd
 
 def generate_feature_set_hash(features: list) -> str:
@@ -182,8 +182,7 @@ def migrate_cache_file(cache_file: str, mongo_db, is_no_per: bool = False):
                 'total_games': cache.get('game_count'),
                 'include_enhanced_features': True,  # Assume True for cached models
                 'include_era_normalization': False,  # Assume False (can't determine from cache)
-                'no_per': is_no_per,
-                'model_specific_features': False  # Assume False (can't determine from cache)
+                'no_per': is_no_per
             }
         }
         

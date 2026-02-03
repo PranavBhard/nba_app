@@ -11,7 +11,7 @@ import os
 from datetime import datetime, date
 
 # Add parent of nba_app to path for imports
-# This allows imports like "from nba_app.cli.Mongo import Mongo"
+# This allows imports like "from nba_app.core.mongo import Mongo"
 # Script is in nba_app/tests/, so we need to go up to the parent of nba_app/
 script_dir = os.path.dirname(os.path.abspath(__file__))  # nba_app/tests/
 nba_app_dir = os.path.dirname(script_dir)  # nba_app/
@@ -19,13 +19,10 @@ project_root = os.path.dirname(nba_app_dir)  # Parent of nba_app/
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-from nba_app.cli.Mongo import Mongo
-from nba_app.cli.NBAModel import NBAModel
-from nba_app.cli.train import (
-    get_default_classifier_features,
-    get_default_points_features,
-    create_model_with_c
-)
+from nba_app.core.mongo import Mongo
+from nba_app.core.models.bball_model import BballModel
+from nba_app.cli_old.train import create_model_with_c
+from nba_app.core.services.training_data import get_all_possible_features
 from nba_app.web.app import load_model_from_mongo_config
 import pandas as pd
 import numpy as np
@@ -98,7 +95,7 @@ def get_players_from_game(db, game_id: str, team: str):
 
 
 def load_model_with_selected_config(db):
-    """Load NBAModel with the selected config from MongoDB."""
+    """Load BballModel with the selected config from MongoDB."""
     # Get selected config
     selected_config = db.model_config_nba.find_one({'selected': True})
     if not selected_config:
@@ -109,10 +106,10 @@ def load_model_with_selected_config(db):
     print(f"  Features: {selected_config.get('feature_count', 0)}")
     print(f"  Training CSV: {selected_config.get('training_csv')}")
     
-    # Initialize model with default settings
-    model = NBAModel(
-        classifier_features=get_default_classifier_features(),
-        points_features=get_default_points_features(),
+    # Initialize model - features loaded from config below
+    model = BballModel(
+        classifier_features=[],  # Set from config
+        points_features=[],  # Set from config
         include_elo=True,
         use_exponential_weighting=True,
         include_era_normalization=False,

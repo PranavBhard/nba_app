@@ -1,0 +1,763 @@
+meta:
+  league_id: nba
+  display_name: NBA
+  sport: basketball
+  logo_url: /static/imgs/NBA-Logo.png
+
+mongo:
+  # Uses the DB configured in `core/mongo.py` unless overridden here.
+  # db_name: heroku_jrgd55fg
+  collections:
+    games: stats_nba
+    player_stats: stats_nba_players
+    players: players_nba
+    teams: teams_nba
+    venues: nba_venues
+    rosters: nba_rosters
+
+    model_config_classifier: model_config_nba
+    model_config_points: model_config_points_nba
+    model_predictions: nba_model_predictions
+    experiment_runs: experiment_runs
+
+    master_training_metadata: master_training_data_nba
+
+    cached_league_stats: cached_league_stats
+    elo_cache: nba_cached_elo_ratings
+    jobs: jobs_nba
+
+paths:
+  # Keep existing default master training location (parent/master_training/MASTER_TRAINING.csv).
+  # This path is resolved relative to repo root unless absolute.
+  master_training_csv: master_training/MASTER_TRAINING.csv
+  # Optional: separate artifacts per league
+  # artifacts_dir: artifacts/nba
+
+espn:
+  base_url_web: https://site.web.api.espn.com
+  base_url_site: https://site.api.espn.com
+
+  # Used in scoreboard header endpoint as `league=<league_slug>`
+  league_slug: nba
+
+  # Used in site endpoints like: /apis/site/v2/sports/basketball/<sport_path>/...
+  sport_path: nba
+
+  endpoints:
+    # Date template var: {YYYYMMDD}; game template var: {game_id}
+    scoreboard_header_template: "{base_url_web}/apis/personalized/v2/scoreboard/header?sport=basketball&league={league_slug}&region=us&lang=en&contentorigin=espn&dates={YYYYMMDD}&tz=America%2FNew_York"
+    scoreboard_site_template: "{base_url_site}/apis/site/v2/sports/basketball/{sport_path}/scoreboard?dates={YYYYMMDD}"
+    game_summary_template: "{base_url_web}/apis/site/v2/sports/basketball/{sport_path}/summary?region=us&lang=en&contentorigin=espn&event={game_id}"
+    teams_template: "{base_url_site}/apis/site/v2/sports/basketball/{sport_path}/teams"
+    roster_template: "{base_url_site}/apis/site/v2/sports/basketball/{sport_path}/teams/{team_id}/roster"
+
+  examples:
+    scoreboard_header_example: cli/structure_examples/espn_resp_example.md
+    scoreboard_header_with_odds_example: cli/structure_examples/espn_api_game_resp_with_odds.md
+    game_summary_example: cli/structure_examples/espn_api_single_game.md
+
+season:
+  timezone: America/New_York
+  # Same as existing logic: season rolls over after August.
+  season_cutover_month: 8
+  exclude_game_types:
+    - preseason
+    - allstar
+  # Mapping from ESPN season.type -> our standardized game_type.
+  # ESPN observed: 1=preseason, 2=regular season, 3=postseason, 5=play-in.
+  game_type_map:
+    1: preseason
+    2: regseason
+    3: playoffs
+    5: playin
+  # ESPN sometimes labels play-in as season.type=2; allow a text-based override.
+  playin_text_override: true
+
+teams:
+  # League-specific mapping of ESPN team ids -> abbreviations (used by web ingestion utilities).
+  team_id_map_file: leagues/team_id_maps/nba_espn_team_id_to_abbrev.json
+  # Primary identifier for teams: 'name' (abbreviation) or 'id' (ESPN team_id)
+  # NBA uses abbreviations since they're unique (LAL, BOS, etc.)
+  primary_identifier: name
+  # Whether to include team_id in games and player_stats documents
+  include_team_id: false
+
+market:
+  # Kalshi prediction market configuration
+  provider: kalshi
+  base_url: https://api.elections.kalshi.com/trade-api/v2
+  series_ticker: KXNBAGAME
+  spread_series_ticker: KXNBASPREAD
+
+  # Map Kalshi team abbreviations to internal DB abbreviations
+  # Format: kalshi_abbrev: internal_abbrev
+  # Only teams that differ are listed; unlisted teams use same abbrev
+  team_abbrev_map:
+    GSW: GS
+    UTA: UTAH
+    NYK: NY
+    NOP: "NO"
+    WAS: WSH
+    SAS: SA
+
+news_sources:
+  # =============================================================================
+  # ESPN - Primary source, best structured data
+  # =============================================================================
+  espn:
+    base_url: https://www.espn.com
+    sport_path: nba
+    content_types: [news, stats, scores, injuries, schedule, boxscore]
+
+    patterns:
+      # Team-level
+      team: /{sport_path}/team/_/name/{team_code}
+      team_news: /{sport_path}/team/news/_/name/{team_code}
+      team_schedule: /{sport_path}/team/schedule/_/name/{team_code}
+      team_roster: /{sport_path}/team/roster/_/name/{team_code}
+      team_stats: /{sport_path}/team/stats/_/name/{team_code}
+      team_injuries: /{sport_path}/team/injuries/_/name/{team_code}
+      # Player-level
+      player: /{sport_path}/player/_/id/{player_id}/{player_slug}
+      player_news: /{sport_path}/player/news/_/id/{player_id}
+      player_stats: /{sport_path}/player/stats/_/id/{player_id}
+      player_gamelog: /{sport_path}/player/gamelog/_/id/{player_id}
+      player_splits: /{sport_path}/player/splits/_/id/{player_id}
+      player_bio: /{sport_path}/player/bio/_/id/{player_id}
+      # Game-level
+      game: /{sport_path}/game/_/gameId/{game_id}
+      game_boxscore: /{sport_path}/boxscore/_/gameId/{game_id}
+      game_playbyplay: /{sport_path}/playbyplay/_/gameId/{game_id}
+      game_recap: /{sport_path}/recap/_/gameId/{game_id}
+      game_matchup: /{sport_path}/matchup/_/gameId/{game_id}
+
+    mappings:
+      # Internal abbrev -> ESPN team code (lowercase)
+      team_codes:
+        ATL: atl
+        BOS: bos
+        BKN: bkn
+        CHA: cha
+        CHI: chi
+        CLE: cle
+        DAL: dal
+        DEN: den
+        DET: det
+        GS: gs
+        HOU: hou
+        IND: ind
+        LAC: lac
+        LAL: lal
+        MEM: mem
+        MIA: mia
+        MIL: mil
+        MIN: min
+        "NO": "no"
+        NY: ny
+        OKC: okc
+        ORL: orl
+        PHI: phi
+        PHX: phx
+        POR: por
+        SAC: sac
+        SA: sa
+        TOR: tor
+        UTA: utah
+        WAS: wsh
+      # Player ID mapping file (internal player_id -> ESPN player_id)
+      player_ids_file: leagues/id_maps/nba_espn_player_ids.json
+      # Game ID mapping (our game_id field maps directly to ESPN gameId)
+      game_id_field: game_id
+
+  # =============================================================================
+  # Basketball-Reference - Best for stats and historical data
+  # =============================================================================
+  basketball_reference:
+    base_url: https://www.basketball-reference.com
+    content_types: [stats, roster, game_logs, historical, boxscore]
+
+    patterns:
+      # Team-level
+      team: /teams/{team_code}/{season}.html
+      team_roster: /teams/{team_code}/{season}.html#roster
+      team_schedule: /teams/{team_code}/{season}_games.html
+      team_stats: /teams/{team_code}/{season}.html#team_and_opponent
+      # Player-level
+      player: /players/{letter}/{player_code}.html
+      player_gamelog: /players/{letter}/{player_code}/gamelog/{season}
+      player_splits: /players/{letter}/{player_code}/splits/{season}
+      player_shooting: /players/{letter}/{player_code}/shooting/{season}
+      # Game-level (format: /boxscores/YYYYMMDD0{home_code}.html)
+      game_boxscore: /boxscores/{game_date}0{home_code}.html
+      game_playbyplay: /boxscores/pbp/{game_date}0{home_code}.html
+      game_shotchart: /boxscores/shot-chart/{game_date}0{home_code}.html
+
+    mappings:
+      # Internal abbrev -> BBRef team code
+      team_codes:
+        ATL: ATL
+        BOS: BOS
+        BKN: BRK
+        CHA: CHO
+        CHI: CHI
+        CLE: CLE
+        DAL: DAL
+        DEN: DEN
+        DET: DET
+        GS: GSW
+        HOU: HOU
+        IND: IND
+        LAC: LAC
+        LAL: LAL
+        MEM: MEM
+        MIA: MIA
+        MIL: MIL
+        MIN: MIN
+        "NO": NOP
+        NY: NYK
+        OKC: OKC
+        ORL: ORL
+        PHI: PHI
+        PHX: PHO
+        POR: POR
+        SAC: SAC
+        SA: SAS
+        TOR: TOR
+        UTA: UTA
+        WAS: WAS
+      # Player code mapping file (internal player_id -> bbref player_code like "jamesle01")
+      player_codes_file: leagues/id_maps/nba_bbref_player_codes.json
+
+  # =============================================================================
+  # Fox Sports - Good for news, scores, injuries
+  # =============================================================================
+  fox_sports:
+    base_url: https://www.foxsports.com
+    content_types: [news, scores, injuries, highlights, odds]
+
+    patterns:
+      # Team-level
+      team: /nba/{team_slug}-team
+      team_schedule: /nba/{team_slug}-team-schedule
+      team_roster: /nba/{team_slug}-team-roster
+      team_stats: /nba/{team_slug}-team-stats
+      # Player-level
+      player: /nba/{player_slug}-player
+      player_stats: /nba/{player_slug}-player-stats
+      player_gamelog: /nba/{player_slug}-player-game-log
+      # Game-level
+      game: /nba/{away_slug}-vs-{home_slug}-{date}
+      game_boxscore: /nba/{away_slug}-vs-{home_slug}-{date}-boxscore
+
+    mappings:
+      team_slugs:
+        ATL: atlanta-hawks
+        BOS: boston-celtics
+        BKN: brooklyn-nets
+        CHA: charlotte-hornets
+        CHI: chicago-bulls
+        CLE: cleveland-cavaliers
+        DAL: dallas-mavericks
+        DEN: denver-nuggets
+        DET: detroit-pistons
+        GS: golden-state-warriors
+        HOU: houston-rockets
+        IND: indiana-pacers
+        LAC: la-clippers
+        LAL: los-angeles-lakers
+        MEM: memphis-grizzlies
+        MIA: miami-heat
+        MIL: milwaukee-bucks
+        MIN: minnesota-timberwolves
+        "NO": new-orleans-pelicans
+        NY: new-york-knicks
+        OKC: oklahoma-city-thunder
+        ORL: orlando-magic
+        PHI: philadelphia-76ers
+        PHX: phoenix-suns
+        POR: portland-trail-blazers
+        SAC: sacramento-kings
+        SA: san-antonio-spurs
+        TOR: toronto-raptors
+        UTA: utah-jazz
+        WAS: washington-wizards
+      player_slugs_file: leagues/id_maps/nba_fox_player_slugs.json
+
+  # =============================================================================
+  # NBC Sports - Good for news, odds, injuries
+  # =============================================================================
+  nbc_sports:
+    base_url: https://www.nbcsports.com
+    content_types: [news, scores, injuries, odds]
+
+    patterns:
+      # Team-level
+      team: /nba/{team_slug}
+      team_news: /nba/{team_slug}/news
+      team_schedule: /nba/{team_slug}/schedule
+      team_roster: /nba/{team_slug}/roster
+      # Player-level
+      player: /nba/players/{player_slug}
+      # Game-level
+      game: /nba/gameday/{game_slug}
+
+    mappings:
+      team_slugs:
+        ATL: atlanta-hawks
+        BOS: boston-celtics
+        BKN: brooklyn-nets
+        CHA: charlotte-hornets
+        CHI: chicago-bulls
+        CLE: cleveland-cavaliers
+        DAL: dallas-mavericks
+        DEN: denver-nuggets
+        DET: detroit-pistons
+        GS: golden-state-warriors
+        HOU: houston-rockets
+        IND: indiana-pacers
+        LAC: la-clippers
+        LAL: los-angeles-lakers
+        MEM: memphis-grizzlies
+        MIA: miami-heat
+        MIL: milwaukee-bucks
+        MIN: minnesota-timberwolves
+        "NO": new-orleans-pelicans
+        NY: new-york-knicks
+        OKC: oklahoma-city-thunder
+        ORL: orlando-magic
+        PHI: philadelphia-76ers
+        PHX: phoenix-suns
+        POR: portland-trail-blazers
+        SAC: sacramento-kings
+        SA: san-antonio-spurs
+        TOR: toronto-raptors
+        UTA: utah-jazz
+        WAS: washington-wizards
+
+  # =============================================================================
+  # RotoWire - Best for injuries, lineups, projections
+  # =============================================================================
+  rotowire:
+    base_url: https://www.rotowire.com
+    content_types: [injuries, lineups, projections, news, depth_charts]
+
+    patterns:
+      # Team-level
+      team: /basketball/nba/teams/{team_slug}
+      team_lineups: /basketball/nba/teams/{team_slug}/lineups
+      team_depth: /basketball/nba/teams/{team_slug}/depth-chart
+      team_injuries: /basketball/nba/teams/{team_slug}/injuries
+      # Player-level
+      player: /basketball/nba/player/{player_slug}
+      player_news: /basketball/nba/player/{player_slug}/news
+      player_projections: /basketball/nba/player/{player_slug}/projections
+      # Game-level
+      daily_lineups: /basketball/nba/lineups
+
+    mappings:
+      team_slugs:
+        ATL: atlanta-hawks
+        BOS: boston-celtics
+        BKN: brooklyn-nets
+        CHA: charlotte-hornets
+        CHI: chicago-bulls
+        CLE: cleveland-cavaliers
+        DAL: dallas-mavericks
+        DEN: denver-nuggets
+        DET: detroit-pistons
+        GS: golden-state-warriors
+        HOU: houston-rockets
+        IND: indiana-pacers
+        LAC: los-angeles-clippers
+        LAL: los-angeles-lakers
+        MEM: memphis-grizzlies
+        MIA: miami-heat
+        MIL: milwaukee-bucks
+        MIN: minnesota-timberwolves
+        "NO": new-orleans-pelicans
+        NY: new-york-knicks
+        OKC: oklahoma-city-thunder
+        ORL: orlando-magic
+        PHI: philadelphia-76ers
+        PHX: phoenix-suns
+        POR: portland-trail-blazers
+        SAC: sacramento-kings
+        SA: san-antonio-spurs
+        TOR: toronto-raptors
+        UTA: utah-jazz
+        WAS: washington-wizards
+      player_slugs_file: leagues/id_maps/nba_rotowire_player_slugs.json
+
+  # =============================================================================
+  # HoopsHype - Best for rumors, salaries
+  # =============================================================================
+  hoopshype:
+    base_url: https://www.hoopshype.com
+    content_types: [rumors, salaries, news]
+
+    patterns:
+      # Team-level
+      team: /team/{team_slug}/
+      team_rumors: /team/{team_slug}/rumors/
+      team_salaries: /salaries/{team_slug}/
+      team_roster: /team/{team_slug}/roster/
+      # Player-level
+      player: /player/{player_slug}/
+      player_salary: /player/{player_slug}/salary/
+      player_rumors: /player/{player_slug}/rumors/
+
+    mappings:
+      team_slugs:
+        ATL: atlanta-hawks
+        BOS: boston-celtics
+        BKN: brooklyn-nets
+        CHA: charlotte-hornets
+        CHI: chicago-bulls
+        CLE: cleveland-cavaliers
+        DAL: dallas-mavericks
+        DEN: denver-nuggets
+        DET: detroit-pistons
+        GS: golden-state-warriors
+        HOU: houston-rockets
+        IND: indiana-pacers
+        LAC: los-angeles-clippers
+        LAL: los-angeles-lakers
+        MEM: memphis-grizzlies
+        MIA: miami-heat
+        MIL: milwaukee-bucks
+        MIN: minnesota-timberwolves
+        "NO": new-orleans-pelicans
+        NY: new-york-knicks
+        OKC: oklahoma-city-thunder
+        ORL: orlando-magic
+        PHI: philadelphia-76ers
+        PHX: phoenix-suns
+        POR: portland-trail-blazers
+        SAC: sacramento-kings
+        SA: san-antonio-spurs
+        TOR: toronto-raptors
+        UTA: utah-jazz
+        WAS: washington-wizards
+      player_slugs_file: leagues/id_maps/nba_hoopshype_player_slugs.json
+
+  # =============================================================================
+  # Sports Illustrated - Good for news, analysis
+  # =============================================================================
+  sports_illustrated:
+    base_url: https://www.si.com
+    content_types: [news, analysis, rumors]
+
+    patterns:
+      # Team-level
+      team: /nba/{team_slug}
+      team_news: /nba/{team_slug}/news
+      # Player-level
+      player: /nba/player/{player_slug}
+
+    mappings:
+      team_slugs:
+        ATL: hawks
+        BOS: celtics
+        BKN: nets
+        CHA: hornets
+        CHI: bulls
+        CLE: cavaliers
+        DAL: mavericks
+        DEN: nuggets
+        DET: pistons
+        GS: warriors
+        HOU: rockets
+        IND: pacers
+        LAC: clippers
+        LAL: lakers
+        MEM: grizzlies
+        MIA: heat
+        MIL: bucks
+        MIN: timberwolves
+        "NO": pelicans
+        NY: knicks
+        OKC: thunder
+        ORL: magic
+        PHI: sixers
+        PHX: suns
+        POR: blazers
+        SAC: kings
+        SA: spurs
+        TOR: raptors
+        UTA: jazz
+        WAS: wizards
+
+  # =============================================================================
+  # NBA.com - Official source
+  # =============================================================================
+  nba_com:
+    base_url: https://www.nba.com
+    content_types: [news, stats, schedule, video]
+
+    patterns:
+      # Team-level
+      team: /{team_slug}
+      team_news: /{team_slug}/news
+      team_schedule: /{team_slug}/schedule
+      team_roster: /{team_slug}/roster
+      team_stats: /{team_slug}/stats
+      # Player-level
+      player: /player/{player_id}
+      player_profile: /player/{player_id}/{player_slug}
+      player_stats: /stats/player/{player_id}
+      # Game-level
+      game: /game/{game_code}
+      game_boxscore: /game/{game_code}/box-score
+
+    mappings:
+      team_slugs:
+        ATL: hawks
+        BOS: celtics
+        BKN: nets
+        CHA: hornets
+        CHI: bulls
+        CLE: cavaliers
+        DAL: mavericks
+        DEN: nuggets
+        DET: pistons
+        GS: warriors
+        HOU: rockets
+        IND: pacers
+        LAC: clippers
+        LAL: lakers
+        MEM: grizzlies
+        MIA: heat
+        MIL: bucks
+        MIN: timberwolves
+        "NO": pelicans
+        NY: knicks
+        OKC: thunder
+        ORL: magic
+        PHI: sixers
+        PHX: suns
+        POR: blazers
+        SAC: kings
+        SA: spurs
+        TOR: raptors
+        UTA: jazz
+        WAS: wizards
+      player_ids_file: leagues/id_maps/nba_nbacom_player_ids.json
+
+  # =============================================================================
+  # CBS Sports - Good roster data in schema markup
+  # =============================================================================
+  cbssports:
+    base_url: https://www.cbssports.com
+    content_types: [news, roster, stats]
+
+    patterns:
+      # Team-level
+      team: /nba/teams/{team_code}/{team_slug}/
+      team_news: /nba/teams/{team_code}/{team_slug}/news/
+      team_roster: /nba/teams/{team_code}/{team_slug}/roster/
+      team_schedule: /nba/teams/{team_code}/{team_slug}/schedule/
+      team_stats: /nba/teams/{team_code}/{team_slug}/stats/
+      # Player-level
+      player: /nba/players/{player_slug}/
+      player_news: /nba/players/{player_slug}/news/
+      # Game-level
+      game_boxscore: /nba/gametracker/boxscore/{game_id}/
+
+    mappings:
+      team_codes:
+        ATL: ATL
+        BOS: BOS
+        BKN: BKN
+        CHA: CHA
+        CHI: CHI
+        CLE: CLE
+        DAL: DAL
+        DEN: DEN
+        DET: DET
+        GS: GS
+        HOU: HOU
+        IND: IND
+        LAC: LAC
+        LAL: LAL
+        MEM: MEM
+        MIA: MIA
+        MIL: MIL
+        MIN: MIN
+        "NO": "NO"
+        NY: NY
+        OKC: OKC
+        ORL: ORL
+        PHI: PHI
+        PHX: PHO
+        POR: POR
+        SAC: SAC
+        SA: SA
+        TOR: TOR
+        UTA: UTA
+        WAS: WAS
+      team_slugs:
+        ATL: atlanta-hawks
+        BOS: boston-celtics
+        BKN: brooklyn-nets
+        CHA: charlotte-hornets
+        CHI: chicago-bulls
+        CLE: cleveland-cavaliers
+        DAL: dallas-mavericks
+        DEN: denver-nuggets
+        DET: detroit-pistons
+        GS: golden-state-warriors
+        HOU: houston-rockets
+        IND: indiana-pacers
+        LAC: la-clippers
+        LAL: los-angeles-lakers
+        MEM: memphis-grizzlies
+        MIA: miami-heat
+        MIL: milwaukee-bucks
+        MIN: minnesota-timberwolves
+        "NO": new-orleans-pelicans
+        NY: new-york-knicks
+        OKC: oklahoma-city-thunder
+        ORL: orlando-magic
+        PHI: philadelphia-76ers
+        PHX: phoenix-suns
+        POR: portland-trail-blazers
+        SAC: sacramento-kings
+        SA: san-antonio-spurs
+        TOR: toronto-raptors
+        UTA: utah-jazz
+        WAS: washington-wizards
+
+  # =============================================================================
+  # Yahoo Sports - Heavy JS, limited use
+  # =============================================================================
+  yahoo:
+    base_url: https://sports.yahoo.com
+    js_required: true
+    content_types: [news, scores, stats]
+
+    patterns:
+      # Team-level
+      team: /nba/teams/{team_slug}/
+      team_schedule: /nba/teams/{team_slug}/schedule
+      team_roster: /nba/teams/{team_slug}/roster
+      team_stats: /nba/teams/{team_slug}/stats
+      # Player-level
+      player: /nba/players/{player_id}
+      # Game-level
+      game: /nba/games/{game_slug}
+
+    mappings:
+      team_slugs:
+        ATL: atlanta
+        BOS: boston
+        BKN: brooklyn
+        CHA: charlotte
+        CHI: chicago
+        CLE: cleveland
+        DAL: dallas
+        DEN: denver
+        DET: detroit
+        GS: golden-state
+        HOU: houston
+        IND: indiana
+        LAC: la-clippers
+        LAL: la-lakers
+        MEM: memphis
+        MIA: miami
+        MIL: milwaukee
+        MIN: minnesota
+        "NO": new-orleans
+        NY: new-york
+        OKC: oklahoma-city
+        ORL: orlando
+        PHI: philadelphia
+        PHX: phoenix
+        POR: portland
+        SAC: sacramento
+        SA: san-antonio
+        TOR: toronto
+        UTA: utah
+        WAS: washington
+
+  # =============================================================================
+  # Bleacher Report - Requires headless browser
+  # =============================================================================
+  bleacher_report:
+    base_url: https://bleacherreport.com
+    js_required: true
+    content_types: [news, analysis]
+
+    patterns:
+      # Team-level only (no structured player/game pages)
+      team: /{team_slug}
+
+    mappings:
+      team_slugs:
+        ATL: atlanta-hawks
+        BOS: boston-celtics
+        BKN: brooklyn-nets
+        CHA: charlotte-hornets
+        CHI: chicago-bulls
+        CLE: cleveland-cavaliers
+        DAL: dallas-mavericks
+        DEN: denver-nuggets
+        DET: detroit-pistons
+        GS: golden-state-warriors
+        HOU: houston-rockets
+        IND: indiana-pacers
+        LAC: la-clippers
+        LAL: los-angeles-lakers
+        MEM: memphis-grizzlies
+        MIA: miami-heat
+        MIL: milwaukee-bucks
+        MIN: minnesota-timberwolves
+        "NO": new-orleans-pelicans
+        NY: new-york-knicks
+        OKC: oklahoma-city-thunder
+        ORL: orlando-magic
+        PHI: philadelphia-76ers
+        PHX: phoenix-suns
+        POR: portland-trail-blazers
+        SAC: sacramento-kings
+        SA: san-antonio-spurs
+        TOR: toronto-raptors
+        UTA: utah-jazz
+        WAS: washington-wizards
+
+pipeline:
+  # First season with data (format: YYYY-YYYY)
+  min_season: "2007-2008"
+  # Season date boundaries
+  season_start_month: 10   # October
+  season_start_day: 1
+  season_end_month: 6      # June (finals)
+  season_end_day: 30
+
+pipelines:
+  # Full pipeline configuration
+  full:
+    steps:
+      - espn_pull:
+          parallel: true
+          max_workers: 4
+      - post_processing:
+          refresh_venues: true
+          refresh_players: true
+          compute_injuries: true
+      - cache_elo: true
+      - generate_training:
+          workers: 32
+          chunk_size: 500
+          include_player_features: true
+      - register_csv: true
+
+  # Training-only configuration
+  training:
+    workers: 32
+    chunk_size: 500
+    include_player_features: true
+    preload:
+      games: true
+      venues: true
+      per_cache: true
+      injury_cache: true

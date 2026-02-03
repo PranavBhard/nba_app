@@ -206,11 +206,44 @@
         padding: 20px;
         color: #666;
     }
-    
+
     .stats {
         margin-bottom: 15px;
         color: #666;
         font-size: 14px;
+    }
+
+    .scroll-hint {
+        display: inline-block;
+        margin-left: 10px;
+        padding: 2px 8px;
+        background: #e3f2fd;
+        color: #1976d2;
+        border-radius: 4px;
+        font-size: 12px;
+        animation: pulse 2s infinite;
+    }
+
+    @keyframes pulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.6; }
+    }
+
+    .column-loading-indicator {
+        position: fixed;
+        bottom: 20px;
+        right: 20px;
+        background: rgba(0,0,0,0.7);
+        color: white;
+        padding: 10px 20px;
+        border-radius: 6px;
+        font-size: 14px;
+        z-index: 1000;
+        display: none;
+    }
+
+    .column-loading-indicator.active {
+        display: block;
     }
     
     .empty-state {
@@ -520,7 +553,8 @@
         border-radius: 8px;
         max-width: 700px;
         width: 90%;
-        max-height: 80vh;
+        max-height: 92vh;
+        height: 92vh;
         overflow-y: auto;
         box-shadow: 0 4px 20px rgba(0,0,0,0.3);
     }
@@ -558,7 +592,9 @@
         background: white;
         border: 1px solid #ddd;
         border-radius: 6px;
-        max-height: 200px;
+        /* Larger dropdown; scroll within suggestions */
+        max-height: min(75vh, 720px);
+        min-height: 360px;
         overflow-y: auto;
         z-index: 1000;
         box-shadow: 0 4px 12px rgba(0,0,0,0.1);
@@ -764,6 +800,12 @@
             <button id="regenerateBtn" class="regenerate-btn" onclick="regenerateSelectedFeatures()" style="padding: 8px 16px;">
                 Regenerate Features
             </button>
+            <button onclick="openRegenerateSeasonsModal()" style="padding: 8px 16px; background: #ff9800; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: 600;">
+                Regenerate Seasons
+            </button>
+            <button onclick="confirmRegenerateFullMaster()" style="padding: 8px 16px; background: #dc3545; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: 600;">
+                Regenerate All
+            </button>
             <button onclick="toggleDateFilters()" style="padding: 8px 16px; background: #28a745; color: white; border: none; border-radius: 6px; cursor: pointer;">
                 Date Filters
             </button>
@@ -825,6 +867,9 @@
         <div class="loading-indicator" id="loadingIndicator" style="display: none;">
             Loading more rows...
         </div>
+        <div class="column-loading-indicator" id="columnLoadingIndicator">
+            Loading more columns...
+        </div>
     </div>
 </div>
 
@@ -840,6 +885,14 @@
                 placeholder="Type feature name (e.g., points|season|avg|diff) or paste comma/newline-separated list"
                 autocomplete="off"
             >
+            <div style="display: flex; gap: 10px; align-items: center; margin-top: 8px;">
+                <div style="font-size: 12px; color: #666; font-weight: 600;">Match mode:</div>
+                <select id="addColumnFilterMatchMode" style="padding: 6px 8px; border: 1px solid #ddd; border-radius: 6px; font-size: 12px;">
+                    <option value="OR" selected>OR</option>
+                    <option value="AND">AND</option>
+                </select>
+                <div style="font-size: 12px; color: #777;">Use comma-separated substrings, same as main filter.</div>
+            </div>
             <div class="autocomplete-suggestions" id="autocompleteSuggestions"></div>
         </div>
         <div class="feature-tags" id="featureTags"></div>
@@ -847,6 +900,55 @@
         <div class="add-column-modal-buttons">
             <button class="modal-btn modal-btn-cancel" onclick="closeAddColumnModal()">Cancel</button>
             <button class="modal-btn modal-btn-confirm" id="confirmAddColumnsBtn" onclick="confirmAddColumns()" disabled>Add Columns</button>
+        </div>
+    </div>
+</div>
+
+<!-- Regenerate Seasons Modal -->
+<div class="add-column-modal" id="regenerateSeasonsModal" style="display: none;">
+    <div class="add-column-modal-content" style="max-width: 600px;">
+        <h2>Regenerate Seasons</h2>
+        <p style="color: #666; margin-bottom: 15px;">
+            Select seasons to regenerate. This will regenerate training data for the selected seasons
+            and merge them into the master training CSV in the correct order.
+        </p>
+
+        <div id="seasonsLoadingIndicator" style="text-align: center; padding: 20px; color: #666;">
+            Loading available seasons...
+        </div>
+
+        <div id="seasonsListContainer" style="display: none;">
+            <div style="display: flex; gap: 10px; margin-bottom: 15px;">
+                <button onclick="selectAllSeasons()" style="padding: 6px 12px; background: #667eea; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 12px;">
+                    Select All
+                </button>
+                <button onclick="selectMissingSeasons()" style="padding: 6px 12px; background: #ff9800; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 12px;">
+                    Select Missing Only
+                </button>
+                <button onclick="deselectAllSeasons()" style="padding: 6px 12px; background: #6c757d; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 12px;">
+                    Deselect All
+                </button>
+            </div>
+
+            <div id="seasonsList" style="max-height: 400px; overflow-y: auto; border: 1px solid #ddd; border-radius: 6px; padding: 10px; background: #f9f9f9;">
+                <!-- Seasons will be populated dynamically -->
+            </div>
+
+            <div style="margin-top: 15px;">
+                <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                    <input type="checkbox" id="noPlayerSeasons" style="width: 16px; height: 16px;">
+                    <span>Skip player-level features (faster)</span>
+                </label>
+            </div>
+        </div>
+
+        <div class="modal-error" id="regenerateSeasonsError" style="display: none;"></div>
+
+        <div class="add-column-modal-buttons">
+            <button class="modal-btn modal-btn-cancel" onclick="closeRegenerateSeasonsModal()">Cancel</button>
+            <button class="modal-btn modal-btn-confirm" id="confirmRegenerateSeasonsBtn" onclick="confirmRegenerateSeasons()" disabled style="background: #ff9800;">
+                Regenerate Selected
+            </button>
         </div>
     </div>
 </div>
@@ -859,6 +961,7 @@ let initialLoadSize = 100;  // Initial load: 100 rows
 let pageSize = 50;  // Subsequent loads: 50 rows per scroll
 let allColumns = [];
 let filteredColumns = [];
+let visibleColumns = [];  // Columns currently rendered (subset of filteredColumns)
 let sortColumn = '';
 let sortDirection = 'asc';
 let columnFilter = '';
@@ -867,6 +970,12 @@ let isLoading = false;
 let hasMoreData = true;
 let totalRows = 0;
 let isInitialLoad = true;  // Track if this is the first load
+
+// Column lazy loading state
+const initialColumnCount = 30;  // Initial columns to load (including metadata)
+const columnBatchSize = 20;  // Columns to load on each horizontal scroll
+let isLoadingColumns = false;
+let hasMoreColumns = true;
 
 // Feature regeneration state
 let currentRegenerationJobId = null;
@@ -878,6 +987,7 @@ let addColumnJobPollInterval = null;
 let allPossibleFeatures = [];
 let selectedFeatureTags = [];
 let currentAutocompleteMatches = [];
+let addColumnFilterMatchMode = 'OR'; // 'OR' or 'AND'
 
 // Metadata columns that should always be visible and sticky
 const METADATA_COLUMNS = ['Year', 'Month', 'Day', 'Home', 'Away', 'game_id'];
@@ -944,12 +1054,19 @@ document.addEventListener('DOMContentLoaded', function() {
     });
 });
 
+// Debounce timer for column filter
+let filterDebounceTimer = null;
+
 function setupEventListeners() {
     document.getElementById('columnFilter').addEventListener('input', function(e) {
         columnFilter = e.target.value;
-        filterColumns();
+        // Debounce filter to avoid multiple API calls while typing
+        clearTimeout(filterDebounceTimer);
+        filterDebounceTimer = setTimeout(() => {
+            filterColumns();
+        }, 300);  // Wait 300ms after last keystroke
     });
-    
+
     document.getElementById('filterMatchMode').addEventListener('change', function(e) {
         filterMatchMode = e.target.value;
         filterColumns();
@@ -1045,10 +1162,19 @@ function setupScrollListener() {
         const scrollTop = tableWrapper.scrollTop;
         const scrollHeight = tableWrapper.scrollHeight;
         const clientHeight = tableWrapper.clientHeight;
-        
-        // Load more when near bottom (within 100px)
+
+        // Load more rows when near bottom (within 100px)
         if (scrollHeight - scrollTop - clientHeight < 100 && !isLoading && hasMoreData) {
             loadMoreRows();
+        }
+
+        // Load more columns when near right edge (within 200px)
+        const scrollLeft = tableWrapper.scrollLeft;
+        const scrollWidth = tableWrapper.scrollWidth;
+        const clientWidth = tableWrapper.clientWidth;
+
+        if (scrollWidth - scrollLeft - clientWidth < 200 && !isLoadingColumns && hasMoreColumns) {
+            loadMoreColumns();
         }
     });
 }
@@ -1063,12 +1189,15 @@ function loadColumns() {
             }
             allColumns = data.columns;
             totalRows = data.total_rows;
-            
+
             // Initialize filtered columns with metadata columns first
             let metadataCols = METADATA_COLUMNS.filter(col => allColumns.includes(col));
             let otherColumns = allColumns.filter(col => !METADATA_COLUMNS.includes(col));
             filteredColumns = [...metadataCols, ...otherColumns];
-            
+
+            // Initialize visible columns with initial subset for performance
+            initializeVisibleColumns();
+
             populateColumnSelect();
             renderHeader();
             loadInitialRows();
@@ -1080,10 +1209,168 @@ function loadColumns() {
         });
 }
 
+function initializeVisibleColumns() {
+    // Start with metadata columns plus initial batch of other columns
+    const metadataCols = filteredColumns.filter(col => METADATA_COLUMNS.includes(col));
+    const otherCols = filteredColumns.filter(col => !METADATA_COLUMNS.includes(col));
+
+    // Take initial batch of non-metadata columns
+    const initialOtherCols = otherCols.slice(0, initialColumnCount - metadataCols.length);
+    visibleColumns = [...metadataCols, ...initialOtherCols];
+
+    hasMoreColumns = visibleColumns.length < filteredColumns.length;
+}
+
+function loadMoreColumns() {
+    if (isLoadingColumns || !hasMoreColumns) return;
+
+    isLoadingColumns = true;
+    document.getElementById('columnLoadingIndicator').classList.add('active');
+
+    // Find next batch of columns to add
+    const currentVisibleCount = visibleColumns.length;
+    const nextColumns = filteredColumns.slice(currentVisibleCount, currentVisibleCount + columnBatchSize);
+
+    if (nextColumns.length === 0) {
+        hasMoreColumns = false;
+        isLoadingColumns = false;
+        document.getElementById('columnLoadingIndicator').classList.remove('active');
+        return;
+    }
+
+    // Add new columns to visible set
+    visibleColumns = [...visibleColumns, ...nextColumns];
+    hasMoreColumns = visibleColumns.length < filteredColumns.length;
+
+    // Add new header cells
+    const headerRow = document.getElementById('headerRow');
+    nextColumns.forEach((col, index) => {
+        const th = document.createElement('th');
+        th.textContent = col;
+        th.className = 'sortable';
+
+        // Add delete button (not for metadata columns)
+        if (!METADATA_COLUMNS.includes(col)) {
+            const deleteBtn = document.createElement('button');
+            deleteBtn.className = 'column-delete-btn';
+            deleteBtn.innerHTML = '×';
+            deleteBtn.title = 'Delete column';
+            deleteBtn.onclick = (e) => {
+                e.stopPropagation();
+                deleteColumn(col);
+            };
+            th.appendChild(deleteBtn);
+        }
+
+        if (sortColumn === col) {
+            th.classList.add(sortDirection === 'asc' ? 'sort-asc' : 'sort-desc');
+        }
+        th.addEventListener('click', () => {
+            if (sortColumn === col) {
+                sortDirection = sortDirection === 'asc' ? 'desc' : 'asc';
+                document.getElementById('sortDirection').value = sortDirection;
+            } else {
+                sortColumn = col;
+                document.getElementById('sortColumn').value = col;
+            }
+            reloadData();
+        });
+        headerRow.appendChild(th);
+    });
+
+    // Fetch data for new columns for existing rows
+    fetchColumnsForExistingRows(nextColumns);
+}
+
+function fetchColumnsForExistingRows(columns) {
+    const tbody = document.getElementById('tableBody');
+    const rows = tbody.querySelectorAll('tr');
+
+    if (rows.length === 0) {
+        isLoadingColumns = false;
+        document.getElementById('columnLoadingIndicator').classList.remove('active');
+        updateStats();
+        return;
+    }
+
+    // Include game_id in request to match rows safely
+    const columnsWithId = ['game_id', ...columns.filter(c => c !== 'game_id')];
+
+    // Build params for fetching column data
+    const params = new URLSearchParams({
+        offset: 0,
+        limit: currentOffset,  // Fetch all currently loaded rows
+        columns: columnsWithId.join(',')
+    });
+
+    if (sortColumn) {
+        params.append('sort_column', sortColumn);
+        params.append('sort_direction', sortDirection);
+    }
+
+    // Add date filters
+    if (dateFilters.year_min) params.append('year_min', dateFilters.year_min);
+    if (dateFilters.year_max) params.append('year_max', dateFilters.year_max);
+    if (dateFilters.month_min) params.append('month_min', dateFilters.month_min);
+    if (dateFilters.month_max) params.append('month_max', dateFilters.month_max);
+    if (dateFilters.day_min) params.append('day_min', dateFilters.day_min);
+    if (dateFilters.day_max) params.append('day_max', dateFilters.day_max);
+    if (dateFilters.date_start) params.append('date_start', dateFilters.date_start);
+    if (dateFilters.date_end) params.append('date_end', dateFilters.date_end);
+
+    fetch(`/api/master-training/rows?${params.toString()}`)
+        .then(response => response.json())
+        .then(data => {
+            if (data.error) {
+                console.error('Error loading column data:', data.error);
+                isLoadingColumns = false;
+                return;
+            }
+
+            // Build a map from game_id to row data for safe matching
+            const rowDataByGameId = {};
+            data.rows.forEach(row => {
+                rowDataByGameId[row.game_id] = row;
+            });
+
+            // Find game_id column index in the current visible columns
+            const gameIdColIndex = visibleColumns.indexOf('game_id');
+
+            // Append new cells to each existing row, matching by game_id
+            rows.forEach((tr) => {
+                const cells = tr.querySelectorAll('td');
+                if (gameIdColIndex >= 0 && cells[gameIdColIndex]) {
+                    // game_id might be wrapped in a link, so get text from link or cell
+                    const gameIdCell = cells[gameIdColIndex];
+                    const link = gameIdCell.querySelector('a');
+                    const gameId = link ? link.textContent : gameIdCell.textContent;
+                    const rowData = rowDataByGameId[gameId];
+                    if (rowData) {
+                        columns.forEach(col => {
+                            const td = document.createElement('td');
+                            const value = rowData[col];
+                            td.textContent = value !== null && value !== undefined ? value : '';
+                            tr.appendChild(td);
+                        });
+                    }
+                }
+            });
+
+            isLoadingColumns = false;
+            document.getElementById('columnLoadingIndicator').classList.remove('active');
+            updateStats();
+        })
+        .catch(error => {
+            console.error('Error loading column data:', error);
+            isLoadingColumns = false;
+            document.getElementById('columnLoadingIndicator').classList.remove('active');
+        });
+}
+
 function filterColumns() {
     // Always include metadata columns first
     let metadataCols = METADATA_COLUMNS.filter(col => allColumns.includes(col));
-    
+
     if (!columnFilter || !columnFilter.trim()) {
         // No filter: include all columns, but metadata first
         let otherColumns = allColumns.filter(col => !METADATA_COLUMNS.includes(col));
@@ -1093,7 +1380,7 @@ function filterColumns() {
         const substrings = columnFilter.split(',')
             .map(s => s.trim().toLowerCase())
             .filter(s => s.length > 0);
-        
+
         if (substrings.length === 0) {
             // Empty after parsing: include all columns
             let otherColumns = allColumns.filter(col => !METADATA_COLUMNS.includes(col));
@@ -1104,9 +1391,9 @@ function filterColumns() {
                 if (METADATA_COLUMNS.includes(col)) {
                     return false;  // Metadata columns handled separately
                 }
-                
+
                 const colLower = col.toLowerCase();
-                
+
                 if (filterMatchMode === 'AND') {
                     // AND mode: column must contain ALL substrings
                     return substrings.every(substring => colLower.includes(substring));
@@ -1118,6 +1405,9 @@ function filterColumns() {
             filteredColumns = [...metadataCols, ...otherColumns];
         }
     }
+
+    // Reset visible columns when filter changes
+    initializeVisibleColumns();
     renderHeader();
     reloadData();
 }
@@ -1136,18 +1426,18 @@ function populateColumnSelect() {
 function renderHeader() {
     const headerRow = document.getElementById('headerRow');
     headerRow.innerHTML = '';
-    
-    filteredColumns.forEach((col, index) => {
+
+    visibleColumns.forEach((col, index) => {
         const th = document.createElement('th');
         th.textContent = col;
         th.className = 'sortable';
-        
+
         // Add metadata-column class for sticky positioning
         if (METADATA_COLUMNS.includes(col)) {
             th.classList.add('metadata-column');
             th.dataset.metadataIndex = METADATA_COLUMNS.indexOf(col).toString();
         }
-        
+
         // Add delete button (not for metadata columns)
         if (!METADATA_COLUMNS.includes(col)) {
             const deleteBtn = document.createElement('button');
@@ -1160,7 +1450,7 @@ function renderHeader() {
             };
             th.appendChild(deleteBtn);
         }
-        
+
         if (sortColumn === col) {
             th.classList.add(sortDirection === 'asc' ? 'sort-asc' : 'sort-desc');
         }
@@ -1177,7 +1467,7 @@ function renderHeader() {
         });
         headerRow.appendChild(th);
     });
-    
+
     // After rendering, calculate actual widths and update sticky positions
     setTimeout(() => {
         updateStickyColumnPositions();
@@ -1223,24 +1513,27 @@ function reloadData() {
     currentOffset = 0;
     hasMoreData = true;
     isInitialLoad = true;  // Reset to initial load when reloading
+    isLoadingColumns = false;  // Reset column loading state
     document.getElementById('tableBody').innerHTML = '';
     loadMoreRows();
 }
 
 function loadMoreRows() {
     if (isLoading || !hasMoreData) return;
-    
+
     isLoading = true;
     document.getElementById('loadingIndicator').style.display = 'block';
-    
+
     // Use initialLoadSize for first load, pageSize for subsequent loads
     const limit = isInitialLoad ? initialLoadSize : pageSize;
-    
+
     const params = new URLSearchParams({
         offset: currentOffset,
         limit: limit,
-        columns: filteredColumns.join(',')
+        columns: visibleColumns.join(',')  // Only fetch visible columns for performance
     });
+
+    console.log(`[loadMoreRows] Requesting ${visibleColumns.length} columns, offset=${currentOffset}, limit=${limit}`);
     
     if (sortColumn) {
         params.append('sort_column', sortColumn);
@@ -1271,17 +1564,17 @@ function loadMoreRows() {
             const tbody = document.getElementById('tableBody');
             data.rows.forEach(row => {
                 const tr = document.createElement('tr');
-                filteredColumns.forEach((col, index) => {
+                visibleColumns.forEach((col, index) => {
                     const td = document.createElement('td');
-                    
+
                     // Add metadata-column class for sticky positioning
                     if (METADATA_COLUMNS.includes(col)) {
                         td.classList.add('metadata-column');
                         td.dataset.metadataIndex = METADATA_COLUMNS.indexOf(col).toString();
                     }
-                    
+
                     const value = row[col];
-                    
+
                     // Make game_id a clickable link
                     if (col === 'game_id' && value !== null && value !== undefined && value !== '') {
                         const link = document.createElement('a');
@@ -1293,28 +1586,28 @@ function loadMoreRows() {
                     } else {
                         td.textContent = value !== null && value !== undefined ? value : '';
                     }
-                    
+
                     tr.appendChild(td);
                 });
                 tbody.appendChild(tr);
             });
-            
+
             currentOffset += data.rows.length;
             hasMoreData = data.has_more;
-            
+
             // Mark that initial load is complete
             if (isInitialLoad) {
                 isInitialLoad = false;
             }
-            
+
             // Update sticky column positions after adding rows
             // Use setTimeout to ensure DOM is fully rendered
             setTimeout(() => {
                 updateStickyColumnPositions();
             }, 50);
-            
+
             if (!hasMoreData && data.rows.length === 0 && currentOffset === 0) {
-                tbody.innerHTML = '<tr><td colspan="' + filteredColumns.length + '" class="empty-state">No data found</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="' + visibleColumns.length + '" class="empty-state">No data found</td></tr>';
             }
             
             // Update total rows count from filtered data
@@ -1334,31 +1627,49 @@ function loadMoreRows() {
 function updateStats() {
     const loadedCount = document.getElementById('tableBody').querySelectorAll('tr').length;
     let text = `Total rows: ${totalRows}`;
-    
+
     // Check if any date filters are active
     const hasDateFilters = Object.values(dateFilters).some(v => v !== null);
     if (hasDateFilters) {
         text += ` (filtered)`;
     }
-    
+
     text += ` | Showing: ${loadedCount} rows`;
-    
+
+    // Show column counts (visible / filtered / total)
+    text += ` | Columns: ${visibleColumns.length}`;
+    if (visibleColumns.length < filteredColumns.length) {
+        text += ` of ${filteredColumns.length}`;
+    }
+    if (filteredColumns.length < allColumns.length) {
+        text += ` (${allColumns.length} total)`;
+    }
+
     if (sortColumn) {
         text += ` | Sorted by: ${sortColumn} (${sortDirection})`;
     }
     if (hasDateFilters) {
         text += ` | Date filters active`;
     }
-    
-    document.getElementById('stats').textContent = text;
-    
+
+    const statsEl = document.getElementById('stats');
+    statsEl.innerHTML = text;
+
+    // Add scroll hint if more columns available
+    if (hasMoreColumns && visibleColumns.length < filteredColumns.length) {
+        const hint = document.createElement('span');
+        hint.className = 'scroll-hint';
+        hint.textContent = 'Scroll right for more columns';
+        statsEl.appendChild(hint);
+    }
+
     // Update column count under filter input
     const columnCountEl = document.getElementById('columnCount');
     if (columnCountEl) {
         if (filteredColumns.length !== allColumns.length) {
-            columnCountEl.textContent = `Visible columns: ${filteredColumns.length} of ${allColumns.length}`;
+            columnCountEl.textContent = `Showing ${visibleColumns.length} of ${filteredColumns.length} filtered columns (${allColumns.length} total)`;
         } else {
-            columnCountEl.textContent = `Visible columns: ${filteredColumns.length}`;
+            columnCountEl.textContent = `Showing ${visibleColumns.length} of ${allColumns.length} columns`;
         }
     }
 }
@@ -1794,6 +2105,7 @@ function setupAddColumnInputListeners() {
     
     const input = document.getElementById('featureNameInput');
     const suggestions = document.getElementById('autocompleteSuggestions');
+    const matchModeSelect = document.getElementById('addColumnFilterMatchMode');
     
     // Setup listeners
     input.addEventListener('input', handleFeatureInput);
@@ -1825,6 +2137,14 @@ function setupAddColumnInputListeners() {
             suggestions.classList.remove('show');
         }, 200);
     });
+
+    if (matchModeSelect) {
+        matchModeSelect.addEventListener('change', (e) => {
+            addColumnFilterMatchMode = e.target.value === 'AND' ? 'AND' : 'OR';
+            // Re-run suggestions for current input
+            handleFeatureInput({ target: input });
+        });
+    }
     
     // Handle paste events (comma or newline-separated lists)
     input.addEventListener('paste', (e) => {
@@ -1861,6 +2181,22 @@ function setupAddColumnInputListeners() {
     addColumnInputHandlersSetup = true;
 }
 
+function filterFeaturesBySubstrings(features, filterValue, matchMode) {
+    const v = (filterValue || '').trim();
+    if (!v) return [];
+    const substrings = v.split(',')
+        .map(s => s.trim().toLowerCase())
+        .filter(s => s.length > 0);
+    if (substrings.length === 0) return [];
+    return features.filter(f => {
+        const lower = String(f).toLowerCase();
+        if (matchMode === 'AND') {
+            return substrings.every(sub => lower.includes(sub));
+        }
+        return substrings.some(sub => lower.includes(sub));
+    });
+}
+
 function handleFeatureInput(e) {
     const input = e.target;
     const value = input.value;
@@ -1875,14 +2211,20 @@ function handleFeatureInput(e) {
         
         // If we have multiple features, process them as tags
         if (features.length > 1) {
-            features.forEach(feature => {
-                if (allPossibleFeatures.includes(feature) && !selectedFeatureTags.includes(feature)) {
-                    addFeatureTag(feature);
-                }
-            });
-            input.value = '';
-            suggestions.classList.remove('show');
-            return;
+            // Only auto-add when ALL tokens are exact valid feature names.
+            // This avoids breaking comma-separated substring filtering (AND/OR) behavior.
+            const allExact = features.every(f => allPossibleFeatures.includes(f));
+            if (allExact) {
+                features.forEach(feature => {
+                    if (!selectedFeatureTags.includes(feature)) {
+                        addFeatureTag(feature);
+                    }
+                });
+                input.value = '';
+                currentAutocompleteMatches = [];
+                suggestions.classList.remove('show');
+                return;
+            }
         }
     }
     
@@ -1894,10 +2236,8 @@ function handleFeatureInput(e) {
         return;
     }
     
-    // Filter features by input
-    const matches = allPossibleFeatures.filter(f =>
-        f.toLowerCase().includes(trimmedValue.toLowerCase())
-    );
+    // Filter features by input using the same AND/OR substring logic as main column filter
+    const matches = filterFeaturesBySubstrings(allPossibleFeatures, trimmedValue, addColumnFilterMatchMode);
     currentAutocompleteMatches = matches;
     
     if (matches.length === 0) {
@@ -1925,8 +2265,8 @@ function handleFeatureInput(e) {
     actionsRow.appendChild(addAllBtn);
     suggestions.appendChild(actionsRow);
     
-    // Show only the first 10 suggestion items to keep the dropdown usable
-    matches.slice(0, 10).forEach(feature => {
+    // Show more items now that the dropdown is taller/scrollable
+    matches.slice(0, 50).forEach(feature => {
         const item = document.createElement('div');
         item.className = 'suggestion-item';
         item.textContent = feature;
@@ -2189,6 +2529,268 @@ async function pollAddColumnJobStatus(jobId) {
         // If status is 'running', continue polling
     } catch (error) {
         console.error('Error polling add column job status:', error);
+    }
+}
+
+// ============================================
+// Regenerate Seasons Functions
+// ============================================
+
+let availableSeasons = {};
+let selectedSeasons = new Set();
+
+async function openRegenerateSeasonsModal() {
+    const modal = document.getElementById('regenerateSeasonsModal');
+    const loadingIndicator = document.getElementById('seasonsLoadingIndicator');
+    const listContainer = document.getElementById('seasonsListContainer');
+    const confirmBtn = document.getElementById('confirmRegenerateSeasonsBtn');
+    const errorDiv = document.getElementById('regenerateSeasonsError');
+
+    modal.style.display = 'flex';
+    loadingIndicator.style.display = 'block';
+    listContainer.style.display = 'none';
+    confirmBtn.disabled = true;
+    errorDiv.style.display = 'none';
+    selectedSeasons.clear();
+
+    try {
+        const response = await fetch('/api/master-training/available-seasons');
+        const data = await response.json();
+
+        if (!data.success) {
+            throw new Error(data.error || 'Failed to load seasons');
+        }
+
+        availableSeasons = data.seasons;
+        renderSeasonsList();
+
+        loadingIndicator.style.display = 'none';
+        listContainer.style.display = 'block';
+    } catch (error) {
+        loadingIndicator.innerHTML = `<span style="color: #dc3545;">Error: ${error.message}</span>`;
+    }
+}
+
+function renderSeasonsList() {
+    const container = document.getElementById('seasonsList');
+    container.innerHTML = '';
+
+    // Sort seasons in descending order (most recent first)
+    const sortedSeasons = Object.keys(availableSeasons).sort().reverse();
+
+    for (const season of sortedSeasons) {
+        const info = availableSeasons[season];
+        const inMaster = info.in_master;
+        const mongoCount = info.count;
+        const masterCount = info.master_count || 0;
+
+        const div = document.createElement('div');
+        div.style.cssText = 'display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-bottom: 1px solid #eee;';
+
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.id = `season-${season}`;
+        checkbox.dataset.season = season;
+        checkbox.style.cssText = 'width: 18px; height: 18px; cursor: pointer;';
+        checkbox.checked = selectedSeasons.has(season);
+        checkbox.addEventListener('change', (e) => {
+            if (e.target.checked) {
+                selectedSeasons.add(season);
+            } else {
+                selectedSeasons.delete(season);
+            }
+            updateRegenerateSeasonsButton();
+        });
+
+        const label = document.createElement('label');
+        label.htmlFor = `season-${season}`;
+        label.style.cssText = 'flex: 1; cursor: pointer; display: flex; justify-content: space-between; align-items: center;';
+
+        const seasonText = document.createElement('span');
+        seasonText.textContent = season;
+        seasonText.style.fontWeight = '600';
+
+        const statusSpan = document.createElement('span');
+        statusSpan.style.fontSize = '12px';
+
+        if (inMaster) {
+            statusSpan.innerHTML = `<span style="color: #28a745;">In master: ${masterCount}</span> / <span style="color: #666;">MongoDB: ${mongoCount}</span>`;
+        } else {
+            statusSpan.innerHTML = `<span style="color: #dc3545; font-weight: 600;">MISSING</span> / <span style="color: #666;">MongoDB: ${mongoCount}</span>`;
+        }
+
+        label.appendChild(seasonText);
+        label.appendChild(statusSpan);
+        div.appendChild(checkbox);
+        div.appendChild(label);
+        container.appendChild(div);
+    }
+}
+
+function selectAllSeasons() {
+    const checkboxes = document.querySelectorAll('#seasonsList input[type="checkbox"]');
+    checkboxes.forEach(cb => {
+        cb.checked = true;
+        selectedSeasons.add(cb.dataset.season);
+    });
+    updateRegenerateSeasonsButton();
+}
+
+function selectMissingSeasons() {
+    selectedSeasons.clear();
+    const checkboxes = document.querySelectorAll('#seasonsList input[type="checkbox"]');
+    checkboxes.forEach(cb => {
+        const season = cb.dataset.season;
+        const info = availableSeasons[season];
+        if (!info.in_master) {
+            cb.checked = true;
+            selectedSeasons.add(season);
+        } else {
+            cb.checked = false;
+        }
+    });
+    updateRegenerateSeasonsButton();
+}
+
+function deselectAllSeasons() {
+    const checkboxes = document.querySelectorAll('#seasonsList input[type="checkbox"]');
+    checkboxes.forEach(cb => {
+        cb.checked = false;
+    });
+    selectedSeasons.clear();
+    updateRegenerateSeasonsButton();
+}
+
+function updateRegenerateSeasonsButton() {
+    const btn = document.getElementById('confirmRegenerateSeasonsBtn');
+    btn.disabled = selectedSeasons.size === 0;
+    btn.textContent = selectedSeasons.size > 0
+        ? `Regenerate ${selectedSeasons.size} Season${selectedSeasons.size > 1 ? 's' : ''}`
+        : 'Regenerate Selected';
+}
+
+function closeRegenerateSeasonsModal() {
+    document.getElementById('regenerateSeasonsModal').style.display = 'none';
+}
+
+async function confirmRegenerateSeasons() {
+    if (selectedSeasons.size === 0) return;
+
+    const seasons = Array.from(selectedSeasons);
+    const noPlayer = document.getElementById('noPlayerSeasons').checked;
+    const errorDiv = document.getElementById('regenerateSeasonsError');
+    const confirmBtn = document.getElementById('confirmRegenerateSeasonsBtn');
+
+    confirmBtn.disabled = true;
+    confirmBtn.textContent = 'Starting...';
+    errorDiv.style.display = 'none';
+
+    try {
+        const response = await fetch('/api/master-training/regenerate-seasons', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                seasons: seasons,
+                no_player: noPlayer
+            })
+        });
+
+        const data = await response.json();
+
+        if (!data.success) {
+            throw new Error(data.error || 'Failed to start regeneration');
+        }
+
+        // Close modal
+        closeRegenerateSeasonsModal();
+
+        // Show progress UI
+        const progressContainer = document.getElementById('jobProgressContainer');
+        const progressBar = document.getElementById('jobProgressBar');
+        const progressPercent = document.getElementById('jobProgressPercent');
+        const progressMessage = document.getElementById('jobProgressMessage');
+        const jobError = document.getElementById('jobError');
+
+        progressContainer.classList.add('active');
+        progressBar.style.width = '0%';
+        progressPercent.textContent = '0%';
+        progressMessage.textContent = `Starting regeneration for ${seasons.length} seasons...`;
+        jobError.style.display = 'none';
+
+        // Start polling
+        currentAddColumnJobId = data.job_id;
+        startAddColumnJobPolling(data.job_id);
+
+    } catch (error) {
+        errorDiv.textContent = error.message;
+        errorDiv.style.display = 'block';
+        confirmBtn.disabled = false;
+        confirmBtn.textContent = `Regenerate ${seasons.length} Season${seasons.length > 1 ? 's' : ''}`;
+    }
+}
+
+// ============================================
+// Regenerate Full Master Training
+// ============================================
+
+function confirmRegenerateFullMaster() {
+    const confirmed = confirm(
+        'This will regenerate the ENTIRE master training CSV from scratch.\n\n' +
+        'This operation:\n' +
+        '- Creates a backup of the current file\n' +
+        '- Regenerates ALL seasons using ALL features from the registry\n' +
+        '- May take a significant amount of time\n\n' +
+        'Are you sure you want to proceed?'
+    );
+
+    if (!confirmed) return;
+
+    // Ask about player features
+    const noPlayer = confirm(
+        'Skip player-level features?\n\n' +
+        'YES = Faster generation (no PER, no injuries)\n' +
+        'NO = Full features (includes PER and injuries)'
+    );
+
+    startFullRegeneration(noPlayer);
+}
+
+async function startFullRegeneration(noPlayer) {
+    try {
+        const response = await fetch('/api/master-training/regenerate-full', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                no_player: noPlayer
+            })
+        });
+
+        const data = await response.json();
+
+        if (!data.success) {
+            alert(`Error: ${data.error}`);
+            return;
+        }
+
+        // Show progress UI
+        const progressContainer = document.getElementById('jobProgressContainer');
+        const progressBar = document.getElementById('jobProgressBar');
+        const progressPercent = document.getElementById('jobProgressPercent');
+        const progressMessage = document.getElementById('jobProgressMessage');
+        const jobError = document.getElementById('jobError');
+
+        progressContainer.classList.add('active');
+        progressBar.style.width = '0%';
+        progressPercent.textContent = '0%';
+        progressMessage.textContent = 'Starting full master training regeneration...';
+        jobError.style.display = 'none';
+
+        // Start polling
+        currentAddColumnJobId = data.job_id;
+        startAddColumnJobPolling(data.job_id);
+
+    } catch (error) {
+        alert(`Error: ${error.message}`);
     }
 }
 </script>

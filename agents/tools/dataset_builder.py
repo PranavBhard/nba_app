@@ -1,5 +1,5 @@
 """
-Dataset Builder Tool - Wraps NBAModel.create_training_data() with caching
+Dataset Builder Tool - Wraps BballModel.create_training_data() with caching
 """
 
 import sys
@@ -15,29 +15,34 @@ parent_dir = os.path.dirname(os.path.dirname(os.path.dirname(script_dir)))
 if parent_dir not in sys.path:
     sys.path.insert(0, parent_dir)
 
-from nba_app.cli.Mongo import Mongo
-from nba_app.cli.NBAModel import NBAModel, get_default_classifier_features, get_default_points_features
-from nba_app.cli.feature_sets import filter_features_by_model_type
-from nba_app.cli.master_training_data import MASTER_TRAINING_PATH, extract_features_from_master, check_master_needs_regeneration
+from nba_app.core.mongo import Mongo
+from nba_app.core.models.bball_model import BballModel
+from nba_app.core.features.sets import filter_features_by_model_type
+from nba_app.core.services.training_data import MASTER_TRAINING_PATH, extract_features_from_master, check_master_needs_regeneration, get_all_possible_features, get_master_training_path
 from nba_app.agents.schemas.experiment_config import DatasetSpec
 
 
 class DatasetBuilder:
     """Builds training datasets with caching"""
-    
-    def __init__(self, db=None):
+
+    def __init__(self, db=None, league=None):
         """
         Initialize DatasetBuilder.
-        
+
         Args:
             db: MongoDB database instance (optional)
+            league: LeagueConfig instance for league-specific paths
         """
         if db is None:
             mongo = Mongo()
             self.db = mongo.db
         else:
             self.db = db
-        
+
+        self.league = league
+        # Get league-specific master training path
+        self.master_training_path = get_master_training_path(league) if league else MASTER_TRAINING_PATH
+
         # Cache directory for datasets
         script_dir = os.path.dirname(os.path.abspath(__file__))
         parent_dir_local = os.path.dirname(os.path.dirname(os.path.dirname(script_dir)))
@@ -58,7 +63,7 @@ class DatasetBuilder:
             (pred_home_points, pred_away_points, pred_point_total) are available in the dataframe
             for reference/analysis but are not used as features in classification training.
         """
-        from nba_app.cli.point_prediction_cache import PointPredictionCache
+        from nba_app.cli_old.point_prediction_cache import PointPredictionCache
         cache = PointPredictionCache(db=self.db)
         
         try:
@@ -118,20 +123,35 @@ class DatasetBuilder:
                 - dropped_features: (Optional) List of features that were requested but not available in master CSV
                 - requested_feature_count: (Optional) Total number of features originally requested
         """
+        # Extract force_rebuild flag (not part of spec hash)
+        force_rebuild = dataset_spec.get('force_rebuild', False)
+        if force_rebuild:
+            print(f"[DatasetBuilder] Force rebuild requested - will bypass cache")
+        # Remove from spec dict copy to avoid validation errors
+        dataset_spec_clean = {k: v for k, v in dataset_spec.items() if k != 'force_rebuild'}
+
         # Validate spec
         try:
-            spec = DatasetSpec(**dataset_spec)
+            spec = DatasetSpec(**dataset_spec_clean)
         except Exception as e:
             raise ValueError(f"Invalid dataset spec: {e}")
-        
+
         # Create hash for caching
         spec_dict = spec.dict(exclude_none=True)
         dataset_id = self._hash_spec(spec_dict)
-        
+
         # Check cache
         cache_file = os.path.join(self.cache_dir, f'dataset_{dataset_id}.csv')
         cache_meta_file = os.path.join(self.cache_dir, f'dataset_{dataset_id}_meta.json')
-        
+
+        # Delete cache if force_rebuild is requested
+        if force_rebuild:
+            if os.path.exists(cache_file):
+                os.remove(cache_file)
+                print(f"[DatasetBuilder] Force rebuild: deleted cached dataset {cache_file}")
+            if os.path.exists(cache_meta_file):
+                os.remove(cache_meta_file)
+
         if os.path.exists(cache_file) and os.path.exists(cache_meta_file):
             # Load from cache
             with open(cache_meta_file, 'r') as f:
@@ -185,9 +205,9 @@ class DatasetBuilder:
             # Read master CSV to get available features
             import pandas as pd
             master_features = set()
-            if os.path.exists(MASTER_TRAINING_PATH):
+            if os.path.exists(self.master_training_path):
                 try:
-                    master_df = pd.read_csv(MASTER_TRAINING_PATH, nrows=0)
+                    master_df = pd.read_csv(self.master_training_path, nrows=0)
                     meta_cols = ['Year', 'Month', 'Day', 'Home', 'Away', 'game_id', 'HomeWon', 'home_points', 'away_points']
                     master_features = set([c for c in master_df.columns if c not in meta_cols])
                 except Exception as e:
@@ -230,9 +250,9 @@ class DatasetBuilder:
                         else:
                             features_by_block['sample_size'].append(feature)
                     else:
-                        features_by_block['absolute_magnitude'].append(feature)
+                        features_by_block['other'].append(feature)
                 else:
-                    # Old format features
+                    # Non-standard feature names (fallback categorization)
                     if 'Per' in feature or ('per' in feature_lower and 'percent' not in feature_lower):
                         features_by_block['player_talent'].append(feature)
                     elif 'Inj' in feature or 'inj' in feature_lower:
@@ -248,7 +268,7 @@ class DatasetBuilder:
                     elif 'GamesPlayed' in feature:
                         features_by_block['sample_size'].append(feature)
                     else:
-                        features_by_block['absolute_magnitude'].append(feature)
+                        features_by_block['other'].append(feature)
             
             # Get features for requested blocks
             features = []
@@ -266,14 +286,14 @@ class DatasetBuilder:
                     f"Requested blocks have features: {[(b, len(features_by_block[b])) for b in spec.feature_blocks if b in features_by_block]}"
                 )
         else:
-            # Use default features
-            features = get_default_classifier_features()
+            # Use all features from registry SSoT
+            features = get_all_possible_features()
         
         # Filter features based on diff_mode
         # FEATURE_SETS contain both diff and home/away features, so we need to filter to the right ones
         # Exception: If individual_features is explicitly provided, don't filter (user wants specific features)
         if spec.diff_mode and not spec.individual_features:
-            from nba_app.cli.feature_name_parser import parse_feature_name
+            from nba_app.core.features.parser import parse_feature_name
             filtered_features = []
             for feature in features:
                 components = parse_feature_name(feature)
@@ -308,10 +328,10 @@ class DatasetBuilder:
             # Get list of valid feature blocks from master CSV for better error message
             # Use the same helper function as support_tools to ensure consistency
             valid_blocks = []
-            if os.path.exists(MASTER_TRAINING_PATH):
+            if os.path.exists(self.master_training_path):
                 try:
                     import pandas as pd
-                    master_df = pd.read_csv(MASTER_TRAINING_PATH, nrows=0)
+                    master_df = pd.read_csv(self.master_training_path, nrows=0)
                     meta_cols = ['Year', 'Month', 'Day', 'Home', 'Away', 'HomeWon']
                     master_features = set([c for c in master_df.columns if c not in meta_cols])
                     
@@ -350,9 +370,9 @@ class DatasetBuilder:
                                 else:
                                     temp_blocks['sample_size'].append(feature)
                             else:
-                                temp_blocks['absolute_magnitude'].append(feature)
+                                temp_blocks['other'].append(feature)
                         else:
-                            # Old format features
+                            # Non-standard feature names (fallback categorization)
                             if 'Per' in feature or ('per' in feature_lower and 'percent' not in feature_lower):
                                 temp_blocks['player_talent'].append(feature)
                             elif 'Inj' in feature or 'inj' in feature_lower:
@@ -368,7 +388,7 @@ class DatasetBuilder:
                             elif 'GamesPlayed' in feature:
                                 temp_blocks['sample_size'].append(feature)
                             else:
-                                temp_blocks['absolute_magnitude'].append(feature)
+                                temp_blocks['other'].append(feature)
                     valid_blocks = sorted([b for b, f in temp_blocks.items() if len(f) > 0])
                 except Exception as e:
                     # Log the exception for debugging but still show empty list
@@ -402,9 +422,9 @@ class DatasetBuilder:
         
         # CRITICAL: Check if master training CSV exists and has all requested features
         # We MUST use master - never create from scratch (except for new feature testing)
-        if not os.path.exists(MASTER_TRAINING_PATH):
+        if not os.path.exists(self.master_training_path):
             raise ValueError(
-                f"Master training CSV not found at {MASTER_TRAINING_PATH}. "
+                f"Master training CSV not found at {self.master_training_path}. "
                 f"Cannot build dataset without pre-computed features. "
                 f"Please generate the master training CSV first."
             )
@@ -414,7 +434,7 @@ class DatasetBuilder:
         try:
             import pandas as pd
             # Quick check: read just the header
-            master_df = pd.read_csv(MASTER_TRAINING_PATH, nrows=0)
+            master_df = pd.read_csv(self.master_training_path, nrows=0)
             # Metadata and target columns (not features)
             meta_target_cols = ['Year', 'Month', 'Day', 'Home', 'Away', 'game_id', 'HomeWon', 'home_points', 'away_points']
             master_features = [c for c in master_df.columns if c not in meta_target_cols]
@@ -459,10 +479,10 @@ class DatasetBuilder:
         if use_master:
             # Carve from pre-computed features (much faster)
             import pandas as pd
-            from nba_app.cli.master_training_data import extract_features_from_master
+            from nba_app.core.services.training_data import extract_features_from_master
             
             # Read pre-computed features CSV
-            master_df = pd.read_csv(MASTER_TRAINING_PATH)
+            master_df = pd.read_csv(self.master_training_path)
             
             # Apply date/year filters
             # Default to 2012 (2012-2013 season) if not specified
@@ -670,7 +690,7 @@ class DatasetBuilder:
                 f"CSV file: {clf_csv}. "
                 f"Requested features: {features[:20] if len(features) > 0 else 'NONE'} "
                 f"({len(features)} total). "
-                f"Check NBAModel.create_training_data logs to see why features are missing."
+                f"Check BballModel.create_training_data logs to see why features are missing."
             )
         
         # Save metadata

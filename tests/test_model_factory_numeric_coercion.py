@@ -25,7 +25,7 @@ if project_root not in sys.path:
 
 
 def test_model_factory_train_from_data_coerces_to_numeric() -> bool:
-    from nba_app.core.model_factory import ModelFactory
+    from nba_app.core.models.factory import ModelFactory
 
     # Create a CSV with one non-numeric feature column that previously caused
     # np.isnan to crash due to object dtype.

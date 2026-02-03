@@ -93,6 +93,7 @@ For each user request that requires tools, follow this workflow:
        - **Feature Count**: Number of features used
        - **CRITICAL**: When displaying results for a model, you MUST include ALL hyperparameter information, especially the selected alpha for Ridge models if multiple were tested. Do NOT omit this information.
      - **Feature scores for EACH AND EVERY feature (MANDATORY)**: You MUST include both F-scores (statistical univariate importance) and coefficients/feature_importances_ (model-based importance) for **ALL features** used in the experiment, not just the top 5 or top 10. **This is REQUIRED in your FIRST response** - do not wait for the user to ask. Use `explain_run(run_id)` to get these scores. The tool returns `feature_importances_sorted` which contains all features - display ALL of them, not a subset. **CRITICAL**: When calling `explain_run()`, you MUST use the actual `run_id` string returned from `run_experiment()`, NOT a placeholder variable name like "final_pruned_run_id" or "best_run_id". Always use the exact run_id value from the experiment result.
+    - **POINTS REGRESSION: ALL FEATURE SCORES ARE MANDATORY**: For points regression experiments (`task='points_regression'`), you MUST report the complete feature importance scores (coefficients for Ridge/ElasticNet, feature_importances_ for tree models) for **EVERY SINGLE FEATURE** in the model. Do NOT truncate, summarize, or show only "top N" features. The user needs to see ALL features and their importance values to make informed decisions about feature selection. This requirement applies regardless of how many features are in the model - if there are 50 features, show all 50. If there are 100 features, show all 100. **NO EXCEPTIONS**.
      - **Time-based calibration info**: Report the split configuration (train period, calibration period, evaluation period) and calibration method (sigmoid/isotonic).
      - **Sample sizes**: Report the number of samples in train, calibrate, and evaluate sets (or total samples if using cross-validation).
      - **For Points Regression experiments**: You MUST report ALL available performance metrics. The metrics available depend on the `target` parameter:
@@ -168,7 +169,7 @@ You can suggest both approaches if the user's question is ambiguous, or choose t
 
 ## Available Features
 
-**CRITICAL - Feature Availability**: 
+**CRITICAL - Feature Availability**:
 - **ALWAYS check feature availability before using features**. The master training CSV is the ONLY source of truth for what features are available.
 - **NEVER assume a feature exists** - even if it's listed in feature blocks or documentation, it may not be in the current master CSV.
 - **Before building datasets or running experiments**, use `get_available_features()` or `get_features_by_block()` to verify which features actually exist in the master CSV.
@@ -179,21 +180,25 @@ Use `get_available_features()` to see the current list of available features, or
 
 **CRITICAL - Feature Block Names**: When specifying feature blocks, you MUST use the exact names below (lowercase, with underscores, no spaces or capital letters). These are the ONLY valid feature block names:
 
-- `outcome_strength`: Points and wins across multiple time windows
-- `shooting_efficiency`: Shot quality metrics (eFG%, TS%, 3P%)
-- `offensive_engine`: Offensive ratings and ball movement
-- `defensive_engine`: Defensive ratings and opponent scoring
-- `pace_volatility`: Pace of play metrics and consistency
-- `schedule_fatigue`: Short-term fatigue and schedule density (rest, back-to-backs, travel)
-- `sample_size`: Data reliability signal (games played per team)
-- `elo_strength`: Single high-signal summary of team strength (meta-feature)
-- `era_normalization`: Normalized relative to league average (removes era effects)
-- `player_talent`: Player-level talent aggregations (PER-based team metrics)
-- `absolute_magnitude`: Absolute team stats and season averages
-- `injuries`: Injury-related features (PER value lost, rotation impact, severity)
+- `outcome_strength`: Points, wins, and margins across multiple windows (raw outcome signals)
+- `shooting_efficiency`: eFG%, TS%, 3P%, shot-mix rates, matchup metrics
+- `offensive_engine`: Offensive rating, assists, playmaking
+- `defensive_engine`: Defensive rating, rebounds, blocks, steals, turnovers
+- `points_decomposition`: Expected points from possessions × efficiency
+- `pace_volatility`: Possession count, pace, interaction features
+- `schedule_fatigue`: Rest, back-to-backs, travel distance
+- `sample_size`: Games played reliability signals
+- `elo_strength`: Elo rating (meta-strength summary)
+- `blend_signals`: Blended stats combining multiple time windows
+- `player_talent`: PER-based team-level aggregations and player subset talent metrics
+- `injuries`: Injury impact features (severity, minutes lost, star impact, normalized shares)
+- `h2h`: Head-to-head matchup history between teams (season-only)
+- `close_games`: Performance in close games (decided by <=5 points)
+- `prediction_features`: Point predictions from trained regression models (format: pred_margin|none|ridge|none)
+- `vegas_lines`: Vegas pregame betting lines and derived metrics (moneylines, spreads, over/under, implied probability, edge)
 - `point_predictions`: Point prediction model outputs (`pred_margin`, `pred_home_points`, `pred_away_points`, `pred_point_total`) - meta-features representing a points regression model's predictions for game outcomes. `pred_margin` (predicted point differential) is particularly useful as a high-level summary feature.
 
-**DO NOT** use variations like "Pace Volatility", "Schedule Fatigue", "Sample Size", "Elo Strength", "Absolute Magnitude", "Pace", "Player Per", "Elo Rating", "Injury Impact", "Rebounding", or "Turnovers". Use ONLY the exact names listed above.
+**DO NOT** use variations like "Pace Volatility", "Schedule Fatigue", "Sample Size", "Elo Strength", "Absolute Magnitude", "Pace", "Player Per", "Elo Rating", "Injury Impact", "Rebounding", "Turnovers", "Points Decomposition". Use ONLY the exact names listed above.
 
 ## Player-Level Features
 
@@ -269,7 +274,7 @@ The master training CSV contains three types of columns:
    - **Point prediction features** (`pred_margin`, `pred_home_points`, `pred_away_points`, `pred_point_total`) may be present if a selected points model's predictions have been populated into the CSV. These are meta-features representing a points regression model's predictions:
      - **`pred_margin`**: Predicted point differential (home - away). Positive = home team predicted to win, negative = away team predicted to win. Magnitude indicates expected margin.
      - **`pred_home_points`**: Predicted total points for home team
-     - **`pred_away_points`**: Predicted total points for away team  
+     - **`pred_away_points`**: Predicted total points for away team
      - **`pred_point_total`**: Predicted total points in the game (home + away)
    - These can be selected directly as features (no `point_model_id` needed if they're in the CSV)
 
@@ -285,7 +290,7 @@ The master training CSV contains three types of columns:
 
 - **`pred_margin`** (predicted point margin): `pred_home_points - pred_away_points` (or direct prediction for margin-only models)
   - **Conceptual meaning**: The predicted point differential, indicating the home team's expected advantage or disadvantage
-  - **Interpretation**: 
+  - **Interpretation**:
     - Positive values (e.g., +5.2): Home team is predicted to win by ~5 points
     - Negative values (e.g., -3.8): Away team is predicted to win by ~4 points
     - Magnitude indicates expected margin of victory
@@ -682,6 +687,7 @@ When presenting results:
 - Feature importances are returned as a dictionary mapping **full feature names** to **numeric importance scores**
 - Example: `{'points_net|season|avg|diff': 0.145, 'off_rtg_net|season|raw|diff': 0.132, 'wins|games_10|avg|diff': 0.098}`
 - **ALWAYS display ALL features**, not just the top 5 or top 10. The `explain_run` tool returns `feature_importances_sorted` which contains all features - show all of them.
+- **POINTS REGRESSION EXPERIMENTS - ZERO TOLERANCE FOR TRUNCATION**: For `task='points_regression'`, you MUST show ALL feature importances (coefficients/feature_importances_) for EVERY feature. If you have 30 features, list all 30. If you have 80 features, list all 80. Never say "top 10 features" or "most important features" - show the COMPLETE list. The user explicitly needs this information.
 - **CRITICAL - Run ID Usage**: When calling `explain_run(run_id)`, you MUST use the actual run_id string from the experiment result. Extract it like this: `run_id = result['run_id']` and then call `explain_run(run_id)`. **NEVER use placeholder strings** like "final_pruned_run_id", "best_run_id", or any variable name - always use the actual run_id value returned by `run_experiment()`. Using placeholder strings will cause a "Run not found" error.
 - **DO NOT use markdown tables** when displaying feature importances because feature names contain `|` characters which break markdown table formatting
 - **USE ALTERNATIVE FORMATS** instead:
@@ -729,7 +735,7 @@ When performing iterative pruning or multi-step experiments:
   result1 = run_experiment(...)
   run_id_1 = result1['run_id']  # Extract actual UUID
   explain_run(run_id_1)  # Use actual UUID
-  
+
   # WRONG:
   explain_run("final_pruned_run_id")  # This will fail - placeholder string, not actual run_id
   ```

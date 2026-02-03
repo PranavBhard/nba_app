@@ -1,0 +1,14 @@
+SYSTEM INIT -->
+
+--> User opens game chat
+	- nba_game_session chat session initiated
+	- if no "last_prediction" for this game, run core prediction flow to store last_prediction (IMPORTANT: PULL FROM LEAGUE MODEL PREDICTIONS COLLECTION)
+	- use last_prediction instance to update league's agent_shared_context instance's (ID'd by this game_id) ensemble_model.p_home and ensemble_model.base_outputs fields.
+	- mongo session instantiated
+
+--> User sends a message
+	- current_turn_doc user_message is reset to new user message and turn_plan and workflow_history are reset to {}
+
+
+
+	

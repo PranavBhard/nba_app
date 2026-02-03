@@ -21,26 +21,26 @@ parent_dir = os.path.dirname(os.path.dirname(script_dir))
 if parent_dir not in sys.path:
     sys.path.insert(0, parent_dir)
 
-from flask import Flask, render_template, request, jsonify, redirect, url_for, send_file
-from nba_app.cli.espn_api import get_scoreboard, get_game_summary, fetch_dates, parse_date_range
+from flask import Flask, render_template, request, jsonify, redirect, url_for, send_file, g
+# fetch_dates, parse_date_range moved to core/pipeline/sync_pipeline
+from nba_app.core.data.espn_client import ESPNClient
 from nba_app.config import config
-from nba_app.cli.Mongo import Mongo
-from nba_app.cli.NBAModel import NBAModel
-from nba_app.cli.points_regression import PointsRegressionTrainer
+from nba_app.core.mongo import Mongo
+from nba_app.core.models import NBAModel
+from nba_app.core.models import PointsRegressionTrainer
 from nba_app.agents.modeler.modeler_agent import ModelerAgent
-from nba_app.agents.matchup_assistant.matchup_assistant_agent import MatchupAssistantAgent
+from nba_app.core.services.matchup_chat import Controller as MatchupChatController
+from nba_app.core.services.matchup_chat.schemas import ControllerOptions
 
 # Import unified core infrastructure
-from nba_app.core.config_manager import ModelConfigManager
-from nba_app.core.model_factory import ModelFactory
-from nba_app.core.feature_manager import FeatureManager
-from nba_app.core.business_logic import ModelBusinessLogic
-from nba_app.core.artifacts import ArtifactManager
-from nba_app.cli.per_calculator import PERCalculator
+from nba_app.core.services.config_manager import ModelConfigManager
+from nba_app.core.models.factory import ModelFactory
+from nba_app.core.features.manager import FeatureManager
+from nba_app.core.services.business_logic import ModelBusinessLogic
+from nba_app.core.services.artifacts import ArtifactManager
+from nba_app.core.stats.per_calculator import PERCalculator
 
-from nba_app.cli.train import (
-    get_default_classifier_features, 
-    get_default_points_features,
+from nba_app.core.training import (
     evaluate_model_combo,
     evaluate_model_combo_with_calibration,
     create_model_with_c,
@@ -55,8 +55,18 @@ from nba_app.cli.train import (
     MODEL_CACHE_FILE,
     MODEL_CACHE_FILE_NO_PER
 )
-from nba_app.cli.feature_sets import get_features_by_sets
-from nba_app.cli.player_utils import build_player_lists_for_prediction
+from nba_app.core.features.sets import get_features_by_sets, get_all_features
+
+# Backward compatibility functions for default features
+def get_default_classifier_features():
+    """Get default classifier features from the feature registry."""
+    return get_all_features(model_type=None)
+
+def get_default_points_features():
+    """Get default points features (empty list - points model uses its own features)."""
+    return []
+from nba_app.core.utils.players import build_player_lists_for_prediction
+from nba_app.core.utils import get_season_from_date as get_season_from_date_core
 import pandas as pd
 import numpy as np
 from sklearn.preprocessing import StandardScaler
@@ -94,6 +104,82 @@ db = mongo.db
 
 config_manager = ModelConfigManager(db)
 
+# Context processor to provide league config to all templates
+from nba_app.core.league_config import load_league_config, get_available_leagues
+
+@app.context_processor
+def inject_league_context():
+    """Inject league configuration into all templates."""
+    # Default to NBA, but could be determined from URL path or session
+    league_id = getattr(g, 'league_id', None) or request.args.get('league', 'nba')
+    try:
+        league = load_league_config(league_id)
+    except Exception:
+        league = load_league_config('nba')
+        league_id = 'nba'
+
+    # Get available leagues for the dropdown
+    available_leagues = []
+    for lg_id in get_available_leagues():
+        try:
+            lg = load_league_config(lg_id)
+            available_leagues.append({
+                'id': lg_id,
+                'display_name': lg.display_name
+            })
+        except Exception:
+            pass
+
+    return {
+        'league': league,
+        'league_id': league_id,
+        'available_leagues': available_leagues,
+    }
+
+@app.before_request
+def set_league_context():
+    """Set league context on flask.g for use in view functions."""
+    league_id = request.args.get('league', 'nba')
+    # Also check URL path for league prefix (e.g., /cbb/...)
+    path_parts = request.path.strip('/').split('/')
+    if path_parts and path_parts[0] in ('nba', 'cbb'):
+        league_id = path_parts[0]
+
+    try:
+        g.league = load_league_config(league_id)
+        g.league_id = league_id
+    except Exception:
+        g.league = load_league_config('nba')
+        g.league_id = 'nba'
+
+
+def league_api_route(rule, **options):
+    """
+    Decorator that registers both plain and league-prefixed API routes.
+    Usage: @league_api_route('/api/something', methods=['GET'])
+    Registers both /api/something and /<league_id>/api/something
+    """
+    def decorator(f):
+        # Register the plain route
+        endpoint = options.pop('endpoint', None) or f.__name__
+        app.add_url_rule(rule, endpoint, f, **options)
+        # Register the league-prefixed route
+        prefixed_rule = '/<league_id>' + rule
+        app.add_url_rule(prefixed_rule, endpoint + '_league', f, **options)
+        return f
+    return decorator
+
+
+def get_master_training_path() -> str:
+    """Get master training CSV path from current league config."""
+    league = getattr(g, 'league', None)
+    if league:
+        return league.master_training_csv
+    # Fallback to NBA config if no league context
+    from nba_app.core.league_config import load_league_config
+    return load_league_config('nba').master_training_csv
+
+
 # Add Jinja2 filter for formatting gametime to Eastern time
 from pytz import timezone, utc
 @app.template_filter('gametime_et')
@@ -121,7 +207,8 @@ def gametime_et_filter(gametime):
     eastern = timezone('US/Eastern')
     et_time = gametime.astimezone(eastern)
     
-    # Format as "7:00 PM" (use # for Windows compatibility, or - for Unix)
+    # Format as "7:00 PM"
+    return et_time.strftime('%-I:%M %p').lstrip('0')
 
 # Cache for PER calculator (shared across requests)
 _per_calculator = None
@@ -313,7 +400,7 @@ def get_points_model_trainer(preloaded_selected_config: dict = None):
         PointsRegressionTrainer instance with loaded model, or None if no config selected
     """
     try:
-        from nba_app.cli.points_regression import PointsRegressionTrainer
+        from nba_app.core.models import PointsRegressionTrainer
         global _points_trainer, _points_trainer_model_path
 
         # Accept pre-fetched config to avoid extra DB call
@@ -375,26 +462,26 @@ def load_features_from_master_csv():
         import csv
         from pathlib import Path
         from collections import defaultdict
-        
-        # Get the master training CSV path
-        from nba_app.cli.master_training_data import MASTER_TRAINING_PATH
-        
-        if not os.path.exists(MASTER_TRAINING_PATH):
-            print(f"Warning: Master training CSV not found at {MASTER_TRAINING_PATH}")
+
+        # Get the master training CSV path from league config
+        master_training_path = get_master_training_path()
+
+        if not os.path.exists(master_training_path):
+            print(f"Warning: Master training CSV not found at {master_training_path}")
             # Fallback to empty sets
             return {}, {}
-        
+
         # Read CSV headers
-        with open(MASTER_TRAINING_PATH, 'r') as f:
+        with open(master_training_path, 'r') as f:
             reader = csv.reader(f)
             headers = next(reader)
-        
+
         # Filter out metadata columns (not features)
         metadata_cols = {'Year', 'Month', 'Day', 'Home', 'Away', 'HomeWon', 'game_id', 'home_points', 'away_points'}
         features = sorted([h for h in headers if h not in metadata_cols])
-        
+
         # Log for debugging
-        print(f"[load_features_from_master_csv] Loaded {len(features)} features from {MASTER_TRAINING_PATH}")
+        print(f"[load_features_from_master_csv] Loaded {len(features)} features from {master_training_path}")
         
         # Group features into sets based on naming patterns
         feature_sets = defaultdict(list)
@@ -1293,10 +1380,14 @@ def get_season_from_date(game_date: date) -> str:
         return f"{game_date.year - 1}-{game_date.year}"
 
 
-def extract_and_update_teams(game_summary: Dict):
+def extract_and_update_teams(game_summary: Dict, teams_collection: str = 'teams_nba'):
     """
-    Extract team information from game summary and upsert to teams_nba collection.
+    Extract team information from game summary and upsert to teams collection.
     Uses team id as the upsert query key.
+
+    Args:
+        game_summary: ESPN game summary response
+        teams_collection: Name of the teams collection (e.g., 'teams_nba', 'cbb_teams')
     """
     header = game_summary.get('header', {})
     competitions = header.get('competitions', [])
@@ -1349,8 +1440,8 @@ def extract_and_update_teams(game_summary: Dict):
                     if isinstance(first_logo, dict) and first_logo.get('href'):
                         update_data['logo'] = first_logo['href']
             
-            # Upsert to teams_nba collection using team_id as the query key
-            db.teams_nba.update_one(
+            # Upsert to teams collection using team_id as the query key
+            db[teams_collection].update_one(
                 {'team_id': str(team_id)},  # Query by team_id
                 {'$set': update_data},
                 upsert=True
@@ -1574,7 +1665,8 @@ def extract_and_update_injuries(game_summary: Dict, home_team: str, away_team: s
 
 
 @app.route('/')
-def index():
+@app.route('/<league_id>/')
+def index(league_id=None):
     """Main page: show today's games or games for date in URL."""
     date_str = request.args.get('date')
     
@@ -1586,398 +1678,389 @@ def index():
     else:
         game_date = date.today()
     
-    # Get games for this date - try API first, then fallback to HTML scraping
-    scoreboard = get_scoreboard(game_date)
+    # Get games for this date - use league-aware ESPN client
+    # Use site API which includes venue info (header API doesn't have venue IDs)
+    espn_client = ESPNClient(league=g.league)
+    scoreboard = espn_client.get_scoreboard_site(game_date)
     games = []
-    
+
     # Debug: Check what we got from API
     if scoreboard:
-        sports_count = len(scoreboard.get('sports', []))
-        if sports_count == 0:
-            print(f"DEBUG: Scoreboard returned but no sports array for {game_date}")
-        else:
-            events_count = sum(len(league.get('events', [])) 
-                             for sport in scoreboard.get('sports', [])
-                             for league in sport.get('leagues', []))
-            print(f"DEBUG: Scoreboard has {sports_count} sports, {events_count} events for {game_date}")
-    
-    # Try API scoreboard first
+        events_count = len(scoreboard.get('events', []))
+        print(f"DEBUG: Scoreboard (site API) has {events_count} events for {game_date}")
+
+    # Try API scoreboard first - site API has events directly at top level
     if scoreboard:
-        for sport in scoreboard.get('sports', []):
-            for league in sport.get('leagues', []):
-                for event in league.get('events', []):
-                    game_id = event.get('id')
-                    if not game_id:
-                        continue
-                    
-                    home_team = None
-                    away_team = None
-                    
-                    # Try multiple ways to get team info
-                    # Method 1: Parse from odds section (scoreboard API structure)
-                    odds = event.get('odds', {})
-                    if odds:
-                        away_odds = odds.get('awayTeamOdds', {})
-                        home_odds = odds.get('homeTeamOdds', {})
-                        
-                        if away_odds and away_odds.get('team'):
-                            away_team = away_odds['team'].get('abbreviation', '').upper()
-                        if home_odds and home_odds.get('team'):
-                            home_team = home_odds['team'].get('abbreviation', '').upper()
-                    
-                    # Method 2: Parse from shortName (e.g., "ATL @ DET")
-                    if not home_team or not away_team:
-                        short_name = event.get('shortName', '')
-                        if '@' in short_name:
-                            parts = short_name.split('@')
-                            if len(parts) == 2:
-                                away_team = parts[0].strip().upper()
-                                home_team = parts[1].strip().upper()
-                    
-                    # Method 3: Check if competitions array exists (from game summary structure)
-                    if not home_team or not away_team:
-                        competitors = event.get('competitions', [])
-                        if competitors and len(competitors) > 0:
-                            comp_list = competitors[0].get('competitors', [])
-                            if len(comp_list) == 2:
-                                for comp in comp_list:
-                                    if comp.get('homeAway') == 'home':
-                                        home_team = comp.get('team', {}).get('abbreviation', '').upper()
-                                    else:
-                                        away_team = comp.get('team', {}).get('abbreviation', '').upper()
-                    
-                    if home_team and away_team:
-                        # Use game_date from route parameter (user-requested date)
-                        # Don't use event.date from API as it's in UTC and can cause timezone shifts
-                        # The route parameter is the authoritative date the user wants to see
-                        event_date = game_date
-                        
-                        # Extract season, year, month, day
-                        season = get_season_from_date(event_date)
-                        year = event_date.year
-                        month = event_date.month
-                        day = event_date.day
-                        date_str = event_date.strftime('%Y-%m-%d')
-                        
-                        # Extract espn_link
-                        espn_link = event.get('link')
-                        if not espn_link:
-                            # Fallback: construct from game_id
-                            espn_link = f"https://www.espn.com/nba/boxscore/_/gameId/{game_id}"
-                        
-                        # Extract odds data for pregame_lines
-                        pregame_lines = {}
-                        event_odds = event.get('odds', {})
-                        if event_odds:
-                            # Map odds fields, only if not None
-                            if event_odds.get('overUnder') is not None:
-                                pregame_lines['over_under'] = event_odds['overUnder']
-                            if event_odds.get('spread') is not None:
-                                pregame_lines['spread'] = event_odds['spread']
-                            
-                            # Extract moneyline from nested structure
-                            odds_home = event_odds.get('home', {})
-                            if odds_home and odds_home.get('moneyLine') is not None:
-                                pregame_lines['home_ml'] = odds_home['moneyLine']
-                            
-                            odds_away = event_odds.get('away', {})
-                            if odds_away and odds_away.get('moneyLine') is not None:
-                                pregame_lines['away_ml'] = odds_away['moneyLine']
-                        
-                        # Build upsert document - only include non-None values
-                        # Use dot notation for nested fields to preserve existing data
-                        update_doc = {'$set': {}}
-                        
-                        # Required fields
-                        update_doc['$set']['game_id'] = game_id
-                        update_doc['$set']['homeTeam.name'] = home_team
-                        update_doc['$set']['awayTeam.name'] = away_team
-                        
-                        # Date fields
-                        update_doc['$set']['date'] = date_str
-                        update_doc['$set']['year'] = year
-                        update_doc['$set']['month'] = month
-                        update_doc['$set']['day'] = day
-                        update_doc['$set']['season'] = season
-                        
-                        # ESPN link
-                        if espn_link:
-                            update_doc['$set']['espn_link'] = espn_link
-                        
-                        # Pregame lines (only if we have odds data)
-                        if pregame_lines:
-                            # Use dot notation to preserve other fields if pregame_lines already exists
-                            for key, value in pregame_lines.items():
-                                update_doc['$set'][f'pregame_lines.{key}'] = value
-                        
-                        # Upsert to stats_nba (preserves existing fields with $set)
-                        db.stats_nba.update_one(
-                            {'game_id': game_id},
-                            update_doc,
-                            upsert=True
-                        )
-                        
-                        # Get game document with last_prediction, pregame_lines, points, injured_players, and gametime
-                        game_doc = db.stats_nba.find_one({'game_id': game_id}, {
-                            'last_prediction': 1, 
-                            'pregame_lines': 1,
-                            'homeTeam.points': 1,
-                            'awayTeam.points': 1,
-                            'homeTeam.injured_players': 1,
-                            'awayTeam.injured_players': 1,
-                            'gametime': 1
-                        })
-                        last_prediction = None
-                        pregame_lines = None
-                        home_points = None
-                        away_points = None
-                        home_injured_player_ids = []  # Initialize before if block
-                        away_injured_player_ids = []  # Initialize before if block
-                        gametime = None
-                        
-                        if game_doc:
-                            if game_doc.get('last_prediction'):
-                                last_prediction = game_doc['last_prediction']
-                                # Ensure it's a plain dict
-                                if hasattr(last_prediction, 'to_dict'):
-                                    last_prediction = last_prediction.to_dict()
-                                elif not isinstance(last_prediction, dict):
-                                    import json
-                                    last_prediction = json.loads(json.dumps(last_prediction, default=str))
-                            
-                            if game_doc.get('pregame_lines'):
-                                pregame_lines = game_doc['pregame_lines']
-                                # Ensure it's a plain dict
-                                if hasattr(pregame_lines, 'to_dict'):
-                                    pregame_lines = pregame_lines.to_dict()
-                                elif not isinstance(pregame_lines, dict):
-                                    import json
-                                    pregame_lines = json.loads(json.dumps(pregame_lines, default=str))
-                            
-                            # Get points from database
-                            home_team_obj = game_doc.get('homeTeam', {})
-                            away_team_obj = game_doc.get('awayTeam', {})
-                            if home_team_obj and home_team_obj.get('points') is not None:
-                                home_points = home_team_obj.get('points')
-                            if away_team_obj and away_team_obj.get('points') is not None:
-                                away_points = away_team_obj.get('points')
-                            
-                            # Get injured player IDs
-                            if home_team_obj:
-                                home_injured_player_ids = home_team_obj.get('injured_players', [])
-                            if away_team_obj:
-                                away_injured_player_ids = away_team_obj.get('injured_players', [])
-                            
-                            # Get gametime
-                            if game_doc.get('gametime'):
-                                gametime = game_doc['gametime']
-                        
-                        # Look up player names for injured players
+        for event in scoreboard.get('events', []):
+            game_id = event.get('id')
+            if not game_id:
+                continue
+
+            home_team = None
+            away_team = None
+
+            # Site API structure: teams are in competitions[0].competitors[]
+            competitions = event.get('competitions', [])
+            if competitions and len(competitions) > 0:
+                comp_list = competitions[0].get('competitors', [])
+                if len(comp_list) == 2:
+                    for comp in comp_list:
+                        team_info = comp.get('team', {})
+                        abbrev = team_info.get('abbreviation', '').upper()
+                        if comp.get('homeAway') == 'home':
+                            home_team = abbrev
+                        else:
+                            away_team = abbrev
+
+            # Fallback: Parse from shortName (e.g., "NO @ CHA")
+            if not home_team or not away_team:
+                short_name = event.get('shortName', '')
+                if '@' in short_name:
+                    parts = short_name.split('@')
+                    if len(parts) == 2:
+                        away_team = parts[0].strip().upper()
+                        home_team = parts[1].strip().upper()
+
+            if home_team and away_team:
+                # Use game_date from route parameter (user-requested date)
+                # Don't use event.date from API as it's in UTC and can cause timezone shifts
+                # The route parameter is the authoritative date the user wants to see
+                event_date = game_date
+
+                # Extract season, year, month, day
+                season = get_season_from_date(event_date)
+                year = event_date.year
+                month = event_date.month
+                day = event_date.day
+                date_str = event_date.strftime('%Y-%m-%d')
+
+                # Extract espn_link
+                espn_link = event.get('link')
+                if not espn_link:
+                    # Fallback: construct from game_id
+                    espn_link = f"https://www.espn.com/nba/boxscore/_/gameId/{game_id}"
+
+                # Extract gametime from ESPN API (UTC format like "2026-02-01T19:00Z")
+                event_gametime = event.get('date')
+
+                # Extract odds data for pregame_lines (site API has different structure)
+                pregame_lines_update = {}
+                # Site API has odds in competitions[0].odds[] array
+                if competitions:
+                    odds_list = competitions[0].get('odds', [])
+                    if odds_list and len(odds_list) > 0:
+                        event_odds = odds_list[0]
+                        if event_odds.get('overUnder') is not None:
+                            pregame_lines_update['over_under'] = event_odds['overUnder']
+                        if event_odds.get('spread') is not None:
+                            pregame_lines_update['spread'] = event_odds['spread']
+                        # Moneylines may be in homeTeamOdds/awayTeamOdds
+                        home_odds = event_odds.get('homeTeamOdds', {})
+                        away_odds = event_odds.get('awayTeamOdds', {})
+                        if home_odds and home_odds.get('moneyLine') is not None:
+                            pregame_lines_update['home_ml'] = home_odds['moneyLine']
+                        if away_odds and away_odds.get('moneyLine') is not None:
+                            pregame_lines_update['away_ml'] = away_odds['moneyLine']
+
+                # Build upsert document - only include non-None values
+                # Use dot notation for nested fields to preserve existing data
+                update_doc = {'$set': {}}
+
+                # Required fields
+                update_doc['$set']['game_id'] = game_id
+                update_doc['$set']['homeTeam.name'] = home_team
+                update_doc['$set']['awayTeam.name'] = away_team
+
+                # Date fields
+                update_doc['$set']['date'] = date_str
+                update_doc['$set']['year'] = year
+                update_doc['$set']['month'] = month
+                update_doc['$set']['day'] = day
+                update_doc['$set']['season'] = season
+
+                # ESPN link
+                if espn_link:
+                    update_doc['$set']['espn_link'] = espn_link
+
+                # Pregame lines (only if we have odds data)
+                if pregame_lines_update:
+                    for key, value in pregame_lines_update.items():
+                        update_doc['$set'][f'pregame_lines.{key}'] = value
+
+                # Gametime - parse from event.date (UTC format like "2026-02-01T19:00Z")
+                if event_gametime:
+                    try:
+                        from nba_app.cli_old.espn_api import parse_gametime
+                        parsed_gametime = parse_gametime(event_gametime)
+                        if parsed_gametime:
+                            update_doc['$set']['gametime'] = parsed_gametime
+                    except Exception as e:
+                        print(f"Warning: Could not parse gametime '{event_gametime}': {e}")
+
+                # Venue GUID - extract from competition venue (already have competitions from above)
+                if competitions:
+                    venue_info = competitions[0].get('venue', {})
+                    venue_id = venue_info.get('id')
+                    if venue_id:
+                        update_doc['$set']['venue_guid'] = str(venue_id)
+
+                # Get league-aware games collection
+                games_collection = g.league.collections.get('games', 'stats_nba')
+
+                # Upsert to games collection (preserves existing fields with $set)
+                db[games_collection].update_one(
+                    {'game_id': game_id},
+                    update_doc,
+                    upsert=True
+                )
+
+                # Get game document with pregame_lines, points, injured_players, and gametime
+                game_doc = db[games_collection].find_one({'game_id': game_id}, {
+                    'pregame_lines': 1,
+                    'homeTeam.points': 1,
+                    'awayTeam.points': 1,
+                    'homeTeam.injured_players': 1,
+                    'awayTeam.injured_players': 1,
+                    'gametime': 1
+                })
+
+                # Get prediction from model_predictions collection
+                predictions_collection = g.league.collections.get('model_predictions', 'nba_model_predictions')
+                prediction_doc = db[predictions_collection].find_one({'game_id': game_id})
+                last_prediction = None
+                if prediction_doc:
+                    last_prediction = {k: v for k, v in prediction_doc.items() if k != '_id'}
+
+                pregame_lines = None
+                home_points = None
+                away_points = None
+                home_injured_player_ids = []
+                away_injured_player_ids = []
+                gametime = event_gametime
+
+                if game_doc:
+                    if game_doc.get('pregame_lines'):
+                        pregame_lines = game_doc['pregame_lines']
+                        if hasattr(pregame_lines, 'to_dict'):
+                            pregame_lines = pregame_lines.to_dict()
+                        elif not isinstance(pregame_lines, dict):
+                            import json
+                            pregame_lines = json.loads(json.dumps(pregame_lines, default=str))
+
+                    home_team_obj = game_doc.get('homeTeam', {})
+                    away_team_obj = game_doc.get('awayTeam', {})
+                    if home_team_obj and home_team_obj.get('points') is not None:
+                        home_points = home_team_obj.get('points')
+                    if away_team_obj and away_team_obj.get('points') is not None:
+                        away_points = away_team_obj.get('points')
+
+                    if home_team_obj:
+                        home_injured_player_ids = home_team_obj.get('injured_players', [])
+                    if away_team_obj:
+                        away_injured_player_ids = away_team_obj.get('injured_players', [])
+
+                    if not gametime and game_doc.get('gametime'):
+                        gametime = game_doc['gametime']
+
+                # Look up player names for injured players
+                home_injured_names = []
+                away_injured_names = []
+
+                if home_injured_player_ids and len(home_injured_player_ids) > 0:
+                    try:
+                        home_player_ids_str = [str(pid) for pid in home_injured_player_ids]
+                        home_players = list(db.players_nba.find(
+                            {'player_id': {'$in': home_player_ids_str}},
+                            {'player_name': 1, 'player_id': 1}
+                        ))
+                        home_injured_names = [p.get('player_name', f"Player {p.get('player_id')}") for p in home_players]
+                    except Exception as e:
+                        print(f"Error looking up home injured players for game {game_id}: {e}")
                         home_injured_names = []
+
+                if away_injured_player_ids and len(away_injured_player_ids) > 0:
+                    try:
+                        away_player_ids_str = [str(pid) for pid in away_injured_player_ids]
+                        away_players = list(db.players_nba.find(
+                            {'player_id': {'$in': away_player_ids_str}},
+                            {'player_name': 1, 'player_id': 1}
+                        ))
+                        away_injured_names = [p.get('player_name', f"Player {p.get('player_id')}") for p in away_players]
+                    except Exception as e:
+                        print(f"Error looking up away injured players for game {game_id}: {e}")
                         away_injured_names = []
-                        
-                        if home_injured_player_ids and len(home_injured_player_ids) > 0:
-                            try:
-                                # Convert to strings for query
-                                home_player_ids_str = [str(pid) for pid in home_injured_player_ids]
-                                home_players = list(db.players_nba.find(
-                                    {'player_id': {'$in': home_player_ids_str}},
-                                    {'player_name': 1, 'player_id': 1}
-                                ))
-                                home_injured_names = [p.get('player_name', f"Player {p.get('player_id')}") for p in home_players]
-                            except Exception as e:
-                                print(f"Error looking up home injured players for game {game_id}: {e}")
-                                home_injured_names = []
-                        
-                        if away_injured_player_ids and len(away_injured_player_ids) > 0:
-                            try:
-                                # Convert to strings for query
-                                away_player_ids_str = [str(pid) for pid in away_injured_player_ids]
-                                away_players = list(db.players_nba.find(
-                                    {'player_id': {'$in': away_player_ids_str}},
-                                    {'player_name': 1, 'player_id': 1}
-                                ))
-                                away_injured_names = [p.get('player_name', f"Player {p.get('player_id')}") for p in away_players]
-                            except Exception as e:
-                                print(f"Error looking up away injured players for game {game_id}: {e}")
-                                away_injured_names = []
-                        
-                        # Check API response for scores if database doesn't have them
-                        if home_points is None or away_points is None:
-                            competitors = event.get('competitors', [])
-                            if len(competitors) == 2:
-                                for comp in competitors:
-                                    comp_score = comp.get('score', '')
-                                    if comp_score and comp_score != '':
-                                        try:
-                                            score_int = int(comp_score)
-                                            if comp.get('homeAway') == 'home':
-                                                home_points = score_int
-                                            else:
-                                                away_points = score_int
-                                        except (ValueError, TypeError):
-                                            pass
-                        
-                        games.append({
-                            'game_id': game_id,
-                            'home_team': home_team,
-                            'away_team': away_team,
-                            'date': date_str,
-                            'last_prediction': last_prediction,
-                            'pregame_lines': pregame_lines,
-                            'home_points': home_points,
-                            'away_points': away_points,
-                            'home_injured_players': home_injured_names,
-                            'away_injured_players': away_injured_names,
-                            'gametime': gametime
-                        })
+
+                # Check API response for scores if database doesn't have them
+                if home_points is None or away_points is None:
+                    # Site API: scores in competitions[0].competitors[]
+                    if competitions:
+                        comp_list = competitions[0].get('competitors', [])
+                        for comp in comp_list:
+                            comp_score = comp.get('score', '')
+                            if comp_score and comp_score != '':
+                                try:
+                                    score_int = int(comp_score)
+                                    if comp.get('homeAway') == 'home':
+                                        home_points = score_int
+                                    else:
+                                        away_points = score_int
+                                except (ValueError, TypeError):
+                                    pass
+
+                # Extract game status from ESPN API
+                event_status = event.get('status', {})
+                game_status = 'pre'
+                game_completed = False
+                game_period = None
+                game_clock = None
+
+                if isinstance(event_status, str):
+                    if event_status.lower() in ('final', 'completed', 'post'):
+                        game_status = 'post'
+                        game_completed = True
+                    elif event_status.lower() in ('active', 'in', 'in progress', 'live'):
+                        game_status = 'in'
+                    else:
+                        game_status = 'pre'
+                elif isinstance(event_status, dict):
+                    status_type = event_status.get('type', {})
+                    if isinstance(status_type, dict):
+                        game_status = status_type.get('name', 'pre')
+                        game_completed = status_type.get('completed', False)
+                    if game_status == 'in':
+                        game_period = event_status.get('period', None)
+                        game_clock = event_status.get('displayClock', None)
+
+                games.append({
+                    'game_id': game_id,
+                    'home_team': home_team,
+                    'away_team': away_team,
+                    'date': date_str,
+                    'last_prediction': last_prediction,
+                    'pregame_lines': pregame_lines,
+                    'home_points': home_points,
+                    'away_points': away_points,
+                    'home_injured_players': home_injured_names,
+                    'away_injured_players': away_injured_names,
+                    'gametime': gametime,
+                    'status': game_status,
+                    'completed': game_completed,
+                    'period': game_period,
+                    'clock': game_clock
+                })
     
-    # Fallback to HTML scraping if API returns no games (for future dates or API issues)
+    # Fallback to database lookup if API returns no games
     if not games:
         try:
-            from nba_app.cli.pull_matchups import pull_matchups
-            matchups = pull_matchups(game_date.year, game_date.month, game_date.day)
-            
-            # For each matchup from HTML scraping, try to get game_id from API
-            for matchup in matchups:
-                if len(matchup) >= 2:
-                    away_team_name = matchup[0].strip()
-                    home_team_name = matchup[1].strip()
-                    
-                    # Try to find game_id by matching team names in API response
-                    game_id = None
-                    if scoreboard:
-                        for sport in scoreboard.get('sports', []):
-                            for league in sport.get('leagues', []):
-                                for event in league.get('events', []):
-                                    event_name = event.get('name', '')
-                                    short_name = event.get('shortName', '')
-                                    
-                                    # Check if team names match (case-insensitive)
-                                    if (away_team_name.lower() in event_name.lower() and 
-                                        home_team_name.lower() in event_name.lower()):
-                                        game_id = event.get('id')
-                                        break
-                                    
-                                    # Also check shortName format
-                                    if '@' in short_name:
-                                        parts = short_name.split('@')
-                                        if len(parts) == 2:
-                                            api_away = parts[0].strip().upper()
-                                            api_home = parts[1].strip().upper()
-                                            # Match team abbreviations
-                                            if (away_team_name.upper() == api_away and 
-                                                home_team_name.upper() == api_home):
-                                                game_id = event.get('id')
-                                                break
-                    
-                    # If we found a game_id, add it; otherwise use a placeholder
-                    if not game_id:
-                        # Generate a temporary game_id for display (won't work for predictions)
-                        game_id = f"temp_{home_team_name}_{away_team_name}_{game_date.strftime('%Y%m%d')}"
-                    
-                    # Get game document with last_prediction, pregame_lines, points, injured_players, and gametime
-                    game_doc = db.stats_nba.find_one({'game_id': game_id}, {
-                        'last_prediction': 1, 
-                        'pregame_lines': 1,
-                        'homeTeam.points': 1,
-                        'awayTeam.points': 1,
-                        'homeTeam.injured_players': 1,
-                        'awayTeam.injured_players': 1,
-                        'gametime': 1
-                    })
-                    last_prediction = None
-                    pregame_lines = None
-                    home_points = None
-                    away_points = None
-                    home_injured_player_ids = []  # Initialize before if block
-                    away_injured_player_ids = []  # Initialize before if block
-                    gametime = None
-                    
-                    if game_doc:
-                        if game_doc.get('last_prediction'):
-                            last_prediction = game_doc['last_prediction']
-                            # Ensure it's a plain dict
-                            if hasattr(last_prediction, 'to_dict'):
-                                last_prediction = last_prediction.to_dict()
-                            elif not isinstance(last_prediction, dict):
-                                import json
-                                last_prediction = json.loads(json.dumps(last_prediction, default=str))
-                        
-                        if game_doc.get('pregame_lines'):
-                            pregame_lines = game_doc['pregame_lines']
-                            # Ensure it's a plain dict
-                            if hasattr(pregame_lines, 'to_dict'):
-                                pregame_lines = pregame_lines.to_dict()
-                            elif not isinstance(pregame_lines, dict):
-                                import json
-                                pregame_lines = json.loads(json.dumps(pregame_lines, default=str))
-                        
-                        # Get points from database
-                        home_team_obj = game_doc.get('homeTeam', {})
-                        away_team_obj = game_doc.get('awayTeam', {})
-                        if home_team_obj and home_team_obj.get('points') is not None:
-                            home_points = home_team_obj.get('points')
-                        if away_team_obj and away_team_obj.get('points') is not None:
-                            away_points = away_team_obj.get('points')
-                        
-                        # Get injured player IDs
-                        if home_team_obj:
-                            home_injured_player_ids = home_team_obj.get('injured_players', [])
-                        if away_team_obj:
-                            away_injured_player_ids = away_team_obj.get('injured_players', [])
-                        
-                        # Get gametime
-                        if game_doc.get('gametime'):
-                            gametime = game_doc['gametime']
-                    
-                    # Look up player names for injured players
-                    home_injured_names = []
-                    away_injured_names = []
-                    
-                    if home_injured_player_ids and len(home_injured_player_ids) > 0:
-                        try:
-                            # Convert to strings for query
-                            home_player_ids_str = [str(pid) for pid in home_injured_player_ids]
-                            home_players = list(db.players_nba.find(
-                                {'player_id': {'$in': home_player_ids_str}},
-                                {'player_name': 1, 'player_id': 1}
-                            ))
-                            home_injured_names = [p.get('player_name', f"Player {p.get('player_id')}") for p in home_players]
-                        except Exception as e:
-                            print(f"Error looking up home injured players for game {game_id}: {e}")
-                            home_injured_names = []
-                    
-                    if away_injured_player_ids and len(away_injured_player_ids) > 0:
-                        try:
-                            # Convert to strings for query
-                            away_player_ids_str = [str(pid) for pid in away_injured_player_ids]
-                            away_players = list(db.players_nba.find(
-                                {'player_id': {'$in': away_player_ids_str}},
-                                {'player_name': 1, 'player_id': 1}
-                            ))
-                            away_injured_names = [p.get('player_name', f"Player {p.get('player_id')}") for p in away_players]
-                        except Exception as e:
-                            print(f"Error looking up away injured players for game {game_id}: {e}")
-                            away_injured_names = []
-                    
-                    games.append({
-                        'game_id': game_id,
-                        'home_team': home_team_name.upper(),
-                        'away_team': away_team_name.upper(),
-                        'date': game_date.strftime('%Y-%m-%d'),
-                        'last_prediction': last_prediction,
-                        'pregame_lines': pregame_lines,
-                        'home_points': home_points,
-                        'away_points': away_points,
-                        'home_injured_players': home_injured_names,
-                        'away_injured_players': away_injured_names,
-                        'gametime': gametime
-                    })
+            date_str = game_date.strftime('%Y-%m-%d')
+            # Get the correct collection name for current league
+            league_config = g.get('league_config')
+            collection_name = 'stats_nba'  # default
+            if league_config:
+                collection_name = league_config.collections.get('games', 'stats_nba')
+
+            # Query games directly from database
+            db_games = list(db[collection_name].find(
+                {'date': date_str},
+                {
+                    'game_id': 1,
+                    'homeTeam': 1,
+                    'awayTeam': 1,
+                    'date': 1,
+                    'last_prediction': 1,
+                    'pregame_lines': 1,
+                    'gametime': 1
+                }
+            ).sort('gametime', 1))
+
+            for game_doc in db_games:
+                game_id = game_doc.get('game_id')
+                if not game_id:
+                    continue
+
+                home_team_obj = game_doc.get('homeTeam', {})
+                away_team_obj = game_doc.get('awayTeam', {})
+
+                home_team = home_team_obj.get('name', '').upper() if home_team_obj else ''
+                away_team = away_team_obj.get('name', '').upper() if away_team_obj else ''
+
+                if not home_team or not away_team:
+                    continue
+
+                # Get prediction from model_predictions collection
+                predictions_collection = g.league.collections.get('model_predictions', 'nba_model_predictions')
+                prediction_doc = db[predictions_collection].find_one({'game_id': game_id})
+                last_prediction = None
+                if prediction_doc:
+                    last_prediction = {k: v for k, v in prediction_doc.items() if k != '_id'}
+
+                pregame_lines = game_doc.get('pregame_lines')
+                home_points = home_team_obj.get('points') if home_team_obj else None
+                away_points = away_team_obj.get('points') if away_team_obj else None
+                gametime = game_doc.get('gametime')
+
+                # Ensure dicts are plain dicts
+                if pregame_lines and hasattr(pregame_lines, 'to_dict'):
+                    pregame_lines = pregame_lines.to_dict()
+
+                # Get injured player names
+                home_injured_player_ids = home_team_obj.get('injured_players', []) if home_team_obj else []
+                away_injured_player_ids = away_team_obj.get('injured_players', []) if away_team_obj else []
+                home_injured_names = []
+                away_injured_names = []
+
+                players_collection = 'players_nba'  # default
+                if league_config:
+                    players_collection = league_config.collections.get('players', 'players_nba')
+
+                if home_injured_player_ids:
+                    try:
+                        home_player_ids_str = [str(pid) for pid in home_injured_player_ids]
+                        home_players = list(db[players_collection].find(
+                            {'player_id': {'$in': home_player_ids_str}},
+                            {'player_name': 1, 'player_id': 1}
+                        ))
+                        home_injured_names = [p.get('player_name', f"Player {p.get('player_id')}") for p in home_players]
+                    except Exception as e:
+                        print(f"Error looking up home injured players: {e}")
+
+                if away_injured_player_ids:
+                    try:
+                        away_player_ids_str = [str(pid) for pid in away_injured_player_ids]
+                        away_players = list(db[players_collection].find(
+                            {'player_id': {'$in': away_player_ids_str}},
+                            {'player_name': 1, 'player_id': 1}
+                        ))
+                        away_injured_names = [p.get('player_name', f"Player {p.get('player_id')}") for p in away_players]
+                    except Exception as e:
+                        print(f"Error looking up away injured players: {e}")
+
+                # For database fallback, infer status from points
+                # If both teams have points, game is likely completed
+                game_completed = home_points is not None and away_points is not None
+                game_status = 'post' if game_completed else 'pre'
+
+                games.append({
+                    'game_id': game_id,
+                    'home_team': home_team,
+                    'away_team': away_team,
+                    'date': date_str,
+                    'last_prediction': last_prediction,
+                    'pregame_lines': pregame_lines,
+                    'home_points': home_points,
+                    'away_points': away_points,
+                    'home_injured_players': home_injured_names,
+                    'away_injured_players': away_injured_names,
+                    'gametime': gametime,
+                    'status': game_status,
+                    'completed': game_completed,
+                    'period': None,
+                    'clock': None
+                })
         except Exception as e:
             import traceback
             traceback.print_exc()
-            print(f"Error in fallback scraping: {e}")
+            print(f"Error in database fallback: {e}")
     
     # Add team logos and colors for each game
     def get_logo_url(team_data):
@@ -1992,13 +2075,14 @@ def index():
         return None
     
     # Fetch team data for all games
+    teams_collection = g.league.collections.get('teams', 'teams_nba')
     for game in games:
         home_team = game['home_team']
         away_team = game['away_team']
-        
-        # Get team data from teams_nba collection
-        home_team_data = db.teams_nba.find_one({'abbreviation': home_team}) or {}
-        away_team_data = db.teams_nba.find_one({'abbreviation': away_team}) or {}
+
+        # Get team data from league-specific teams collection
+        home_team_data = db[teams_collection].find_one({'abbreviation': home_team}) or {}
+        away_team_data = db[teams_collection].find_one({'abbreviation': away_team}) or {}
         
         # Extract logos
         game['home_team_logo'] = get_logo_url(home_team_data)
@@ -2012,52 +2096,45 @@ def index():
     
     prev_date = (game_date - timedelta(days=1)).strftime('%Y-%m-%d')
     next_date = (game_date + timedelta(days=1)).strftime('%Y-%m-%d')
-    
+
+    # Sort games by gametime
+    games.sort(key=lambda g: g.get('gametime', '') or '')
+
     # Calculate game pull stats: games with homeWon / total games for this date
     date_str = game_date.strftime('%Y-%m-%d')
-    # Total games = max of scheduled games from API and games in stats_nba (to handle both cases)
+    games_collection = g.league.collections.get('games', 'stats_nba')
+    # Total games = max of scheduled games from API and games in DB (to handle both cases)
     api_games_count = len(games)
-    db_games_count = db.stats_nba.count_documents({'date': date_str})
+    db_games_count = db[games_collection].count_documents({'date': date_str})
     total_games = max(api_games_count, db_games_count) if (api_games_count > 0 or db_games_count > 0) else 0
     # Games with homeWon = games that have been pulled (have stats)
-    games_with_homewon = db.stats_nba.count_documents({
+    games_with_homewon = db[games_collection].count_documents({
         'date': date_str,
         'homeWon': {'$exists': True}
     })
-    
-    # Calculate games in master training data for this date
-    games_in_master = 0
-    try:
-        from nba_app.cli.master_training_data import MASTER_TRAINING_PATH
-        import pandas as pd
-        if os.path.exists(MASTER_TRAINING_PATH):
-            # Read master CSV and count games for this date
-            try:
-                df = pd.read_csv(MASTER_TRAINING_PATH, on_bad_lines='skip', engine='python')
-            except TypeError:
-                df = pd.read_csv(MASTER_TRAINING_PATH, error_bad_lines=False, warn_bad_lines=True, engine='python')
-            
-            # Filter for games matching this date
-            year, month, day = game_date.year, game_date.month, game_date.day
-            date_matches = (df['Year'] == year) & (df['Month'] == month) & (df['Day'] == day)
-            games_in_master = int(date_matches.sum())
-    except Exception as e:
-        # If we can't read the master file, just set to 0
-        print(f"Warning: Could not read master training data to count games: {e}")
-        games_in_master = 0
-    
-    return render_template('game_list.html', 
-                         games=games, 
-                         game_date=game_date, 
-                         prev_date=prev_date, 
+
+    # Get Kalshi team abbreviation mappings from league config for frontend
+    league_config = getattr(g, 'league', None)
+    kalshi_abbrev_map = {}
+    kalshi_reverse_map = {}
+    if league_config:
+        kalshi_abbrev_map = league_config.raw.get('market', {}).get('team_abbrev_map', {})
+        kalshi_reverse_map = {v: k for k, v in kalshi_abbrev_map.items()}
+
+    return render_template('game_list.html',
+                         games=games,
+                         game_date=game_date,
+                         prev_date=prev_date,
                          next_date=next_date,
                          games_pulled=games_with_homewon,
                          total_games=total_games,
-                         games_in_master=games_in_master)
+                         kalshi_abbrev_map=kalshi_abbrev_map,
+                         kalshi_reverse_map=kalshi_reverse_map)
 
 
 @app.route('/game/<game_id>')
-def game_detail(game_id):
+@app.route('/<league_id>/game/<game_id>')
+def game_detail(game_id, league_id=None):
     """Game detail page with player management."""
     # Check if date is provided in query parameters (from game list page)
     date_param = request.args.get('date')
@@ -2073,8 +2150,9 @@ def game_detail(game_id):
             date_param = None
     
     # Get game info from database or ESPN API
-    game = db.stats_nba.find_one({'game_id': game_id})
-    
+    games_collection = g.league.collections.get('games', 'stats_nba')
+    game = db[games_collection].find_one({'game_id': game_id})
+
     # Check if game exists and has required structure
     if not game or not game.get('homeTeam') or not game.get('awayTeam'):
         # Try to get from ESPN API
@@ -2219,9 +2297,10 @@ def game_detail(game_id):
     home_players.sort(key=sort_key)
     away_players.sort(key=sort_key)
     
-    # Get team data (logo, colors) from teams_nba collection
-    home_team_data = db.teams_nba.find_one({'abbreviation': home_team}) or {}
-    away_team_data = db.teams_nba.find_one({'abbreviation': away_team}) or {}
+    # Get team data (logo, colors) from league-specific teams collection
+    teams_collection = g.league.collections.get('teams', 'teams_nba')
+    home_team_data = db[teams_collection].find_one({'abbreviation': home_team}) or {}
+    away_team_data = db[teams_collection].find_one({'abbreviation': away_team}) or {}
     
     # Extract logo URL from logos array if logo field doesn't exist
     def get_logo_url(team_data):
@@ -2243,19 +2322,19 @@ def game_detail(game_id):
     away_team_logo = get_logo_url(away_team_data)
     
     # Calculate team records
-    home_records = calculate_team_records(home_team, season, game_date)
-    away_records = calculate_team_records(away_team, season, game_date)
+    home_records = calculate_team_records(home_team, season, game_date, league=g.league)
+    away_records = calculate_team_records(away_team, season, game_date, league=g.league)
     
-    # Store player IDs in stats_nba document for this game
+    # Store player IDs in games collection document for this game
     # This helps predict() function find players for PER calculations
     if game_id:
         try:
             # Extract player IDs from home and away players
             home_player_ids = [str(p.get('player_id')) for p in home_players if p.get('player_id')]
             away_player_ids = [str(p.get('player_id')) for p in away_players if p.get('player_id')]
-            
-            # Update stats_nba document with player lists
-            update_result = db.stats_nba.update_one(
+
+            # Update games collection document with player lists
+            update_result = db[games_collection].update_one(
                 {'game_id': game_id},
                 {
                     '$set': {
@@ -2264,21 +2343,21 @@ def game_detail(game_id):
                     }
                 }
             )
-            
+
             if update_result.matched_count > 0:
-                print(f"DEBUG game_detail: Updated stats_nba with {len(home_player_ids)} home players and {len(away_player_ids)} away players")
+                print(f"DEBUG game_detail: Updated {games_collection} with {len(home_player_ids)} home players and {len(away_player_ids)} away players")
             else:
-                print(f"DEBUG game_detail: Game {game_id} not found in stats_nba, could not update player lists")
+                print(f"DEBUG game_detail: Game {game_id} not found in {games_collection}, could not update player lists")
         except Exception as e:
-            print(f"DEBUG game_detail: Error updating player lists in stats_nba: {e}")
+            print(f"DEBUG game_detail: Error updating player lists in {games_collection}: {e}")
             import traceback
             traceback.print_exc()
-    
+
     # Get last prediction and pregame_lines from database
     last_prediction = None
     pregame_lines = None
     print(f"DEBUG game_detail: Looking for last_prediction and pregame_lines for game_id={game_id}")
-    game_doc = db.stats_nba.find_one({'game_id': game_id}, {'last_prediction': 1, 'pregame_lines': 1})
+    game_doc = db[games_collection].find_one({'game_id': game_id}, {'last_prediction': 1, 'pregame_lines': 1})
     if game_doc:
         last_prediction = game_doc.get('last_prediction')
         print(f"DEBUG game_detail: last_prediction found: {last_prediction is not None}")
@@ -2328,12 +2407,19 @@ def game_detail(game_id):
     )
 
 
-def calculate_team_records(team: str, season: str, game_date: date) -> Dict:
+def calculate_team_records(team: str, season: str, game_date: date, league=None) -> Dict:
     """Calculate team W-L records (overall, home, away, last 10)."""
     before_date = game_date.strftime('%Y-%m-%d')
-    
+
+    # Get league-aware collection and exclude game types
+    games_collection = 'stats_nba'
+    exclude_game_types = ['preseason', 'allstar']
+    if league:
+        games_collection = league.collections.get('games', 'stats_nba')
+        exclude_game_types = getattr(league, 'exclude_game_types', exclude_game_types)
+
     # Get all games for this team before the game date
-    games = list(db.stats_nba.find(
+    games = list(db[games_collection].find(
         {
             'season': season,
             'date': {'$lt': before_date},
@@ -2343,7 +2429,7 @@ def calculate_team_records(team: str, season: str, game_date: date) -> Dict:
             ],
             'homeTeam.points': {'$gt': 0},
             'awayTeam.points': {'$gt': 0},
-            'game_type': {'$nin': ['preseason', 'allstar']}
+            'game_type': {'$nin': exclude_game_types}
         },
         {
             'homeTeam.name': 1,
@@ -2612,8 +2698,9 @@ def get_player_game_status(game_id: str) -> Dict:
     return status_dict
 
 
+@app.route('/<league_id>/api/move-player', methods=['POST'])
 @app.route('/api/move-player', methods=['POST'])
-def move_player():
+def move_player(league_id=None):
     """Move a player from one team to another in nba_rosters."""
     data = request.json
     player_id = data.get('player_id')
@@ -2704,29 +2791,33 @@ def move_player():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+@app.route('/<league_id>/api/remove-player', methods=['POST'])
 @app.route('/api/remove-player', methods=['POST'])
-def remove_player():
-    """Remove a player from the game's player list in stats_nba. Does NOT update nba_rosters."""
+def remove_player(league_id=None):
+    """Remove a player from the game's player list. Does NOT update rosters."""
     data = request.json
     game_id = data.get('game_id')
     player_id = data.get('player_id')
     team = data.get('team')
-    
+
     if not all([game_id, player_id, team]):
         return jsonify({'success': False, 'error': 'Missing required fields'}), 400
-    
+
     try:
+        # Get league-aware games collection
+        games_collection = g.league.collections.get('games', 'stats_nba')
+
         # Get the game document
-        game = db.stats_nba.find_one({'game_id': game_id})
+        game = db[games_collection].find_one({'game_id': game_id})
         if not game:
             return jsonify({'success': False, 'error': f'Game {game_id} not found'}), 404
-        
+
         # Determine which team field to update
         team_key = 'homeTeam' if team == game.get('homeTeam', {}).get('name') else 'awayTeam'
-        
+
         # Get current player list
         current_players = game.get(team_key, {}).get('players', [])
-        
+
         # Convert player_id to the same type as stored (could be string or int)
         player_id_to_remove = str(player_id)
         if current_players and isinstance(current_players[0], int):
@@ -2734,12 +2825,12 @@ def remove_player():
                 player_id_to_remove = int(player_id)
             except (ValueError, TypeError):
                 pass
-        
+
         # Remove player from list
         updated_players = [p for p in current_players if str(p) != str(player_id_to_remove)]
-        
+
         # Update the game document
-        result = db.stats_nba.update_one(
+        result = db[games_collection].update_one(
             {'game_id': game_id},
             {
                 '$set': {
@@ -2765,18 +2856,22 @@ def remove_player():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+@app.route('/<league_id>/api/load-players', methods=['POST'])
 @app.route('/api/load-players', methods=['POST'])
-def load_players():
-    """Load players from ESPN API and update players_nba and injuries."""
+def load_players(league_id=None):
+    """Load players from ESPN API and update players and injuries."""
     data = request.json
     game_id = data.get('game_id')
-    
+
     if not game_id:
         return jsonify({'success': False, 'error': 'Missing game_id'}), 400
-    
+
     try:
+        # Get league-aware games collection
+        games_collection = g.league.collections.get('games', 'stats_nba')
+
         # Get game from database
-        game = db.stats_nba.find_one({'game_id': game_id})
+        game = db[games_collection].find_one({'game_id': game_id})
         if not game:
             return jsonify({'success': False, 'error': f'Game {game_id} not found'}), 404
         
@@ -2786,15 +2881,16 @@ def load_players():
         if not home_team or not away_team:
             return jsonify({'success': False, 'error': 'Game missing team information'}), 400
         
-        # Get game summary from ESPN API
-        from nba_app.cli.espn_api import get_game_summary
-        game_summary = get_game_summary(game_id)
-        
+        # Get game summary from ESPN API (league-aware)
+        espn_client = ESPNClient(league=g.league)
+        game_summary = espn_client.get_game_summary(game_id)
+
         if not game_summary:
             return jsonify({'success': False, 'error': 'Could not fetch game summary from ESPN API'}), 404
         
-        # Update teams
-        extract_and_update_teams(game_summary)
+        # Update teams (use league-specific collection)
+        teams_collection = g.league.collections.get('teams', 'teams_nba')
+        extract_and_update_teams(game_summary, teams_collection)
         # Update player roster (headshots, names, positions) - updates players_nba only
         extract_and_update_player_roster(game_summary, home_team, away_team)
         # Update injuries - updates players_nba only
@@ -2807,58 +2903,76 @@ def load_players():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+@app.route('/<league_id>/api/update-player', methods=['POST'])
 @app.route('/api/update-player', methods=['POST'])
-def update_player():
-    """Update player status (playing/starter/injured) for a game. Updates nba_rosters for starter/injured status."""
+def update_player(league_id=None):
+    """Update player status (playing/starter/injured) for a game. Updates rosters collection for starter/injured status."""
     data = request.json
+    if not data:
+        return jsonify({'success': False, 'error': 'No JSON data received'}), 400
+
     game_id = data.get('game_id')
     player_id = data.get('player_id')
     team = data.get('team')
     is_playing = data.get('is_playing', True)
     is_starter = data.get('is_starter', False)
     is_injured = data.get('is_injured', False)
-    
-    if not all([game_id, player_id, team]):
-        return jsonify({'error': 'Missing required fields'}), 400
-    
-    # Get season from game
-    game = db.stats_nba.find_one({'game_id': game_id})
+
+    # Debug logging
+    print(f"DEBUG update_player: game_id={game_id}, player_id={player_id}, team={team}, is_starter={is_starter}, is_injured={is_injured}")
+
+    missing = []
+    if not game_id:
+        missing.append('game_id')
+    if not player_id:
+        missing.append('player_id')
+    if not team:
+        missing.append('team')
+    if missing:
+        print(f"DEBUG update_player: RETURNING 400 - missing fields: {missing}")
+        return jsonify({'success': False, 'error': f'Missing required fields: {", ".join(missing)}'}), 400
+
+    print("DEBUG update_player: Passed validation, getting league config...")
+    # Get league-aware collection names
+    league = g.league
+    games_collection = league.collections.get('games', 'stats_nba')
+    players_collection = league.collections.get('players', 'players_nba')
+    rosters_collection = league.collections.get('rosters', 'nba_rosters')
+
+    print(f"DEBUG update_player: Looking for game in {games_collection}...")
+    # Get season from game - handle both string and int game_id
+    game_id_query = [game_id]
+    if str(game_id).isdigit():
+        game_id_query.append(int(game_id))
+        game_id_query.append(str(game_id))
+    game = db[games_collection].find_one({'game_id': {'$in': game_id_query}})
     if not game:
-        return jsonify({'error': 'Game not found'}), 404
-    
+        print(f"DEBUG update_player: RETURNING 404 - game not found: {game_id}")
+        return jsonify({'success': False, 'error': f'Game not found: {game_id}'}), 404
+
+    print(f"DEBUG update_player: Found game, getting date...")
     game_date_str = game.get('date')
     if game_date_str:
         try:
             game_date = datetime.strptime(game_date_str, '%Y-%m-%d').date()
-            season = get_season_from_date(game_date)
-        except:
-            return jsonify({'error': 'Invalid game date'}), 400
+            season = get_season_from_date_core(game_date, league=league)
+            print(f"DEBUG update_player: season={season}")
+        except Exception as e:
+            print(f"DEBUG update_player: RETURNING 400 - invalid date: {e}")
+            return jsonify({'success': False, 'error': 'Invalid game date'}), 400
     else:
-        return jsonify({'error': 'Game missing date'}), 400
-    
-    # Upsert player game status (for this specific game)
-    db.player_game_status.update_one(
-        {
-            'game_id': game_id,
-            'player_id': player_id,
-            'team': team
-        },
-        {
-            '$set': {
-                'game_id': game_id,
-                'player_id': player_id,
-                'team': team,
-                'is_playing': is_playing,
-                'is_starter': is_starter,
-                'updated_at': datetime.utcnow()
-            }
-        },
-        upsert=True
-    )
-    
-    # Update players_nba with injured status
-    db.players_nba.update_one(
-        {'player_id': player_id},
+        print("DEBUG update_player: RETURNING 400 - game missing date")
+        return jsonify({'success': False, 'error': 'Game missing date'}), 400
+
+    # Update players collection with injured status
+    # Handle both string and int player_ids
+    player_id_query = [player_id]
+    if str(player_id).isdigit():
+        player_id_query.append(int(player_id))
+        player_id_query.append(str(player_id))
+
+    db[players_collection].update_one(
+        {'player_id': {'$in': player_id_query}},
         {
             '$set': {
                 'injured': is_injured,
@@ -2867,14 +2981,13 @@ def update_player():
         },
         upsert=False
     )
-    
-    # Update nba_rosters with starter status and injured status
+
+    # Update rosters collection with starter status and injured status
     # Find the roster entry for this player and update it
-    # nba_rosters uses season + team as unique key
-    roster_doc = db.nba_rosters.find_one(
+    roster_doc = db[rosters_collection].find_one(
         {'season': season, 'team': team}
     )
-    
+
     if not roster_doc:
         print(f"DEBUG update_player: No roster found for season={season}, team={team}")
         # If roster doesn't exist, we can't update it - this is expected if rosters haven't been generated yet
@@ -2885,14 +2998,14 @@ def update_player():
         for roster_entry in roster:
             if str(roster_entry.get('player_id')) == str(player_id):
                 roster_entry['starter'] = is_starter
-                roster_entry['injured'] = is_injured  # Always update injured status
+                roster_entry['injured'] = is_injured
                 updated = True
                 print(f"DEBUG update_player: Updated player {player_id} in roster - starter={is_starter}, injured={is_injured}")
                 break
-        
+
         if updated:
             # Update the roster document
-            result = db.nba_rosters.update_one(
+            result = db[rosters_collection].update_one(
                 {'season': season, 'team': team},
                 {
                     '$set': {
@@ -2901,44 +3014,161 @@ def update_player():
                     }
                 }
             )
-            print(f"DEBUG update_player: nba_rosters update result - matched={result.matched_count}, modified={result.modified_count}")
+            print(f"DEBUG update_player: {rosters_collection} update result - matched={result.matched_count}, modified={result.modified_count}")
         else:
             print(f"DEBUG update_player: Player {player_id} not found in roster for team {team}, season {season}")
             print(f"DEBUG update_player: Roster has {len(roster)} players")
-    
+
     return jsonify({'success': True})
 
 
-@app.route('/api/predict', methods=['POST'])
-def predict():
-    """Generate prediction for a game with player configuration."""
+@app.route('/<league_id>/api/game-detail/<game_id>', methods=['GET'])
+@app.route('/api/game-detail/<game_id>', methods=['GET'])
+@app.route('/<league_id>/api/game-detail/<game_id>', methods=['GET'])
+def api_game_detail(game_id, league_id=None):
+    """Get game detail data for modal display. Thin wrapper around core game_service."""
+    from nba_app.core.services.game_service import get_game_detail
+
+    date_param = request.args.get('date')
+    game_date = None
+    if date_param:
+        try:
+            game_date = datetime.strptime(date_param, '%Y-%m-%d').date()
+        except:
+            pass
+
+    result = get_game_detail(db, game_id, game_date, g.league)
+
+    if not result.get('success'):
+        status_code = 404 if 'not found' in result.get('error', '').lower() else 400
+        return jsonify(result), status_code
+
+    return jsonify(result)
+
+
+@app.route('/<league_id>/api/player-detail', methods=['GET'])
+@app.route('/api/player-detail', methods=['GET'])
+def api_player_detail(league_id=None):
+    """Get player detail stats for the player detail panel."""
+    from nba_app.core.services.game_service import get_player_detail
+
+    player_id = request.args.get('player_id')
+    team = request.args.get('team')
+    game_date_str = request.args.get('date')
+    season = request.args.get('season')
+
+    if not all([player_id, team]):
+        return jsonify({'success': False, 'error': 'Missing player_id or team'}), 400
+
+    # Parse game date
+    game_date = None
+    if game_date_str:
+        try:
+            game_date = datetime.strptime(game_date_str, '%Y-%m-%d').date()
+        except:
+            pass
+    if not game_date:
+        game_date = date.today()
+
+    # Get season if not provided
+    if not season:
+        season = get_season_from_date(game_date, league=g.league)
+
+    result = get_player_detail(db, player_id, team, season, game_date, g.league)
+    return jsonify(result)
+
+
+@app.route('/<league_id>/api/player-per', methods=['GET'])
+@app.route('/api/player-per', methods=['GET'])
+def api_player_per(league_id=None):
+    """Get player PER (separate endpoint due to calculation time)."""
+    from nba_app.core.services.game_service import get_player_per
+
+    player_id = request.args.get('player_id')
+    team = request.args.get('team')
+    game_date_str = request.args.get('date')
+    season = request.args.get('season')
+
+    if not all([player_id, team]):
+        return jsonify({'success': False, 'error': 'Missing player_id or team'}), 400
+
+    # Parse game date
+    game_date = None
+    if game_date_str:
+        try:
+            game_date = datetime.strptime(game_date_str, '%Y-%m-%d').date()
+        except:
+            pass
+    if not game_date:
+        game_date = date.today()
+
+    # Get season if not provided
+    if not season:
+        season = get_season_from_date(game_date, league=g.league)
+
+    result = get_player_per(db, player_id, team, season, game_date, g.league)
+    return jsonify(result)
+
+
+@app.route('/<league_id>/api/players-per-batch', methods=['POST'])
+@app.route('/api/players-per-batch', methods=['POST'])
+def api_players_per_batch(league_id=None):
+    """Get PER for multiple players at once (more efficient than individual calls)."""
+    from nba_app.core.services.game_service import get_players_per_batch
+
     data = request.json
-    
-    # Debug: print received data
-    print(f"DEBUG: Received prediction request: {data}")
-    
     if not data:
-        error_msg = 'No data received in request'
-        print(f"Prediction error: {error_msg}")
-        return jsonify({'success': False, 'error': error_msg}), 400
-    
+        return jsonify({'success': False, 'error': 'No data provided'}), 400
+
+    players = data.get('players', [])  # List of {player_id, team}
+    game_date_str = data.get('date')
+    season = data.get('season')
+
+    if not players:
+        return jsonify({'success': True, 'per_values': {}})
+
+    # Parse game date
+    game_date = None
+    if game_date_str:
+        try:
+            game_date = datetime.strptime(game_date_str, '%Y-%m-%d').date()
+        except:
+            pass
+    if not game_date:
+        game_date = date.today()
+
+    # Get season if not provided
+    if not season:
+        season = get_season_from_date(game_date, league=g.league)
+
+    per_values = get_players_per_batch(db, players, season, game_date, g.league)
+
+    return jsonify({
+        'success': True,
+        'per_values': per_values
+    })
+
+
+@app.route('/<league_id>/api/predict', methods=['POST'])
+@app.route('/api/predict', methods=['POST'])
+def predict(league_id=None):
+    """
+    Generate prediction for a game with player configuration.
+    Thin wrapper around core PredictionService.
+    """
+    from nba_app.core.services.prediction import PredictionService
+
+    data = request.json
+    if not data:
+        return jsonify({'success': False, 'error': 'No data received in request'}), 400
+
     game_id = data.get('game_id')
     game_date_str = data.get('game_date')
     home_team = data.get('home_team')
     away_team = data.get('away_team')
-    player_config = data.get('player_config', {})  # {team: {player_id: {is_playing, is_starter}}}
-    
-    # Load saved model config if available (for future use in model selection)
-    model_config = None
-    try:
-        config_doc = db.model_configs.find_one({'_id': 'current'})
-        if config_doc and 'config' in config_doc:
-            model_config = config_doc['config']
-            print(f"DEBUG: Using saved model config: {model_config}")
-    except Exception as e:
-        print(f"DEBUG: Could not load saved config: {e}")
-    
-    # Debug logging
+    player_config = data.get('player_config', {})
+
+    # Validate required fields
     missing_fields = []
     if not game_id:
         missing_fields.append('game_id')
@@ -2948,440 +3178,68 @@ def predict():
         missing_fields.append('home_team')
     if not away_team:
         missing_fields.append('away_team')
-    
+
     if missing_fields:
-        error_msg = f'Missing required fields: {", ".join(missing_fields)}. Received data: {data}'
-        print(f"Prediction error: {error_msg}")
-        return jsonify({'success': False, 'error': error_msg}), 400
-    
+        return jsonify({'success': False, 'error': f'Missing required fields: {", ".join(missing_fields)}'}), 400
+
     try:
         game_date = datetime.strptime(game_date_str, '%Y-%m-%d').date()
     except ValueError:
-        return jsonify({'error': 'Invalid date format'}), 400
-    
-    season = get_season_from_date(game_date)
-    
-    # Fetch selected configs once to avoid duplicate queries
-    selected_classifier_config = None
-    selected_points_config = None
-    try:
-        selected_classifier_config = db.model_config_nba.find_one({'selected': True})
-    except Exception as e:
-        print(f"DEBUG: Could not load selected classifier config: {e}")
-    try:
-        selected_points_config = db.model_config_points_nba.find_one({'selected': True})
-    except Exception as e:
-        print(f"DEBUG: Could not load selected points config: {e}")
-    
-    # Validate that the selected config is trained and ready for predictions
-    # Uses shared validation logic from core/config_manager.py
-    is_valid, error_msg = ModelConfigManager.validate_config_for_prediction(selected_classifier_config)
-    if not is_valid:
-        return jsonify({'error': error_msg}), 400
-    
-    # Get model (will need to be loaded/cached)
-    model = get_nba_model()
+        return jsonify({'success': False, 'error': 'Invalid date format. Use YYYY-MM-DD'}), 400
 
-    # Regular models require a loaded classifier_model.
-    # Ensembles are loaded via ensemble_run_id/meta-model artifacts and do not set classifier_model.
-    is_ensemble_selected = bool(selected_classifier_config and selected_classifier_config.get('ensemble', False))
-    is_ensemble_loaded = bool(getattr(model, 'is_ensemble', False))
+    try:
+        # Use core PredictionService
+        service = PredictionService(db=db, league=g.league)
 
-    if not model or (not model.classifier_model and not (is_ensemble_selected and is_ensemble_loaded)):
-        if selected_classifier_config:
-            return jsonify({
-                'error': f'The selected model config "{selected_classifier_config.get("name", "Unnamed")}" could not be loaded. Please train the model again.'
-            }), 400
-        else:
-            return jsonify({'error': 'No model config selected and no cached model found. Please select and train a model config first.'}), 400
-
-    # Get training CSV path from current classifier config
-    training_csv = None
-    try:
-        if selected_classifier_config:
-            training_csv = selected_classifier_config.get('training_csv')
-        elif model.classifier_csv:
-            training_csv = model.classifier_csv
-    except Exception as e:
-        print(f"DEBUG: Could not get training_csv from config: {e}")
-        if model.classifier_csv:
-            training_csv = model.classifier_csv
-    
-    # Build player_filters from nba_rosters (source of truth)
-    # Priority: Use stats_nba.{home/away}Team.players if game has been clicked into
-    # Otherwise: Use nba_rosters roster
-    # Injury/starter status always comes from nba_rosters
-    player_filters = build_player_lists_for_prediction(
-        home_team=home_team,
-        away_team=away_team,
-        season=season,
-        game_id=game_id,
-        db=db
-    )
-    
-    # Check if model uses time-based calibration and should use calibrated predictions
-    use_calibrated = False
-    try:
-        if selected_classifier_config and selected_classifier_config.get('use_time_calibration', False):
-            use_calibrated = True
-            print(f"Using calibrated model for prediction (time-based calibration enabled)")
-    except Exception as e:
-        print(f"Could not check calibration settings: {e}")
-    
-    # Check if classifier model was trained with point prediction features
-    # Auto-detect if pred_margin is needed and generate it using the selected point model
-    # ALWAYS get points prediction from selected points model config (if available)
-    # This is used both for:
-    # 1. Providing pred_margin as a feature if the classifier model expects it
-    # 2. Storing home_points_pred and away_points_pred in last_prediction for display
-    points_prediction = None
-    additional_features = None  # Will contain pred_margin if model expects it
-    
-    # Check if the classifier/ensemble expects pred_margin as a feature.
-    # - Regular models: inferred from model.feature_names
-    # - Ensembles: inferred from ensemble_meta_features (since ensemble wrapper has no feature_names)
-    if selected_classifier_config and selected_classifier_config.get('ensemble', False):
-        ensemble_meta_features = selected_classifier_config.get('ensemble_meta_features') or []
-        needs_pred_margin = 'pred_margin' in ensemble_meta_features
-    else:
-        needs_pred_margin = hasattr(model, 'feature_names') and model.feature_names and 'pred_margin' in model.feature_names
-    
-    # Get points prediction from selected points model config (if available)
-    # We do this BEFORE making the classifier prediction so we can use pred_margin as a feature if needed
-    if selected_points_config:
-        print(f"DEBUG: Selected points model config found. Generating point predictions...")
-        points_trainer = get_points_model_trainer(preloaded_selected_config=selected_points_config)
-        
-        if points_trainer:
-            try:
-                # Get game document for points prediction
-                game_doc = db.stats_nba.find_one({'game_id': game_id})
-                if not game_doc:
-                    # Create minimal game doc for prediction
-                    game_doc = {
-                        'game_id': game_id,
-                        'date': game_date_str,
-                        'year': game_date.year,
-                        'month': game_date.month,
-                        'day': game_date.day,
-                        'season': season,
-                        'homeTeam': {'name': home_team},
-                        'awayTeam': {'name': away_team}
-                    }
-                
-                # Make points prediction
-                points_prediction = points_trainer.predict(game_doc, game_date_str)
-                print(f"DEBUG: Points prediction result: {points_prediction}")
-                
-                # If the classifier model expects pred_margin, extract it from the points prediction
-                if needs_pred_margin:
-                    pred_margin = None
-                    # Check if it's a margin-only model (returns point_diff_pred directly)
-                    if 'point_diff_pred' in points_prediction and points_prediction['point_diff_pred'] is not None:
-                        pred_margin = points_prediction['point_diff_pred']
-                    elif 'home_points' in points_prediction and 'away_points' in points_prediction:
-                        # Home/away model - derive margin from home_points and away_points
-                        pred_home = points_prediction.get('home_points', 0) or 0
-                        pred_away = points_prediction.get('away_points', 0) or 0
-                        pred_margin = pred_home - pred_away
-                    else:
-                        print(f"WARNING: Could not extract pred_margin from points prediction: {points_prediction}")
-                    
-                    if pred_margin is not None:
-                        additional_features = {'pred_margin': pred_margin}
-                        print(f"DEBUG: Will include pred_margin={pred_margin} as feature in classifier prediction")
-                    else:
-                        print(f"WARNING: Could not extract pred_margin from points prediction. Model may have missing feature.")
-            except Exception as e:
-                print(f"WARNING: Error making point prediction: {e}")
-                import traceback
-                traceback.print_exc()
-                # Continue without points prediction - classifier prediction can still proceed
-        else:
-            print(f"WARNING: Could not load selected points model trainer.")
-    else:
-        print(f"DEBUG: No selected points model config found. Skipping point predictions.")
-    
-    # Backward compatibility: Also check old point_model_id if present (for existing configs)
-    # This is deprecated but we'll support it for existing configs
-    if not points_prediction and not additional_features and selected_classifier_config and selected_classifier_config.get('point_model_id'):
-        point_model_id = selected_classifier_config.get('point_model_id')
-        print(f"DEBUG: [DEPRECATED] Config has point_model_id: {point_model_id}. Using it for backward compatibility...")
-        
-        try:
-            from bson import ObjectId
-            points_config = db.model_config_points_nba.find_one({'_id': ObjectId(point_model_id)})
-            
-            if points_config:
-                points_trainer = get_points_model_trainer(preloaded_selected_config=points_config)
-                
-                if points_trainer:
-                    game_doc = db.stats_nba.find_one({'game_id': game_id})
-                    if not game_doc:
-                        game_doc = {
-                            'game_id': game_id,
-                            'date': game_date_str,
-                            'year': game_date.year,
-                            'month': game_date.month,
-                            'day': game_date.day,
-                            'season': season,
-                            'homeTeam': {'name': home_team},
-                            'awayTeam': {'name': away_team}
-                        }
-                    
-                    points_prediction = points_trainer.predict(game_doc, game_date_str)
-                    
-                    if needs_pred_margin:
-                        pred_margin = None
-                        if 'point_diff_pred' in points_prediction and points_prediction['point_diff_pred'] is not None:
-                            pred_margin = points_prediction['point_diff_pred']
-                        elif 'home_points' in points_prediction and 'away_points' in points_prediction:
-                            pred_margin = (points_prediction.get('home_points', 0) or 0) - (points_prediction.get('away_points', 0) or 0)
-                        
-                        if pred_margin is not None:
-                            additional_features = {'pred_margin': pred_margin}
-        except Exception as e:
-            print(f"WARNING: Error using deprecated point_model_id: {e}")
-            # Continue without pred_margin
-    
-    # Make prediction with player filters
-    # If additional_features (e.g., pred_margin) is available, it will be included in the feature vector
-    try:
-        prediction = model.predict_with_player_config(
-        home_team, away_team, season, game_date_str, player_filters,
-        use_calibrated=use_calibrated,
-        additional_features=additional_features
+        # Make prediction
+        result = service.predict_game(
+            home_team=home_team,
+            away_team=away_team,
+            game_date=game_date_str,
+            game_id=game_id,
+            player_config=player_config,
+            include_points=True
         )
-        
-        # Extract player lists from model if available (for PER and injury features)
-        feature_players = {}
-        if hasattr(model, '_per_player_lists') and model._per_player_lists:
-            feature_players.update(model._per_player_lists.copy())
-        if hasattr(model, '_injury_player_lists') and model._injury_player_lists:
-            feature_players.update(model._injury_player_lists.copy())
-        
-        # Get injured player names (always fetch for display, regardless of whether model uses injury features)
-        home_injured_players = []
-        away_injured_players = []
-        if hasattr(model, 'stat_handler') and model.stat_handler:
-            try:
-                # Always fetch injured players if stat_handler is available
-                # They're needed for injury features during prediction and should be stored for display
-                injury_features_result = model.stat_handler.get_injury_features(
-                    home_team, away_team, season, game_date.year, game_date.month, game_date.day,
-                    game_doc=db.stats_nba.find_one({'game_id': game_id}),
-                    per_calculator=model.per_calculator if hasattr(model, 'per_calculator') else None,
-                    recency_decay_k=getattr(model, 'recency_decay_k', 15.0)
-                )
-                if injury_features_result:
-                    home_injured_players = injury_features_result.get('home_injured_players', [])
-                    away_injured_players = injury_features_result.get('away_injured_players', [])
-            except Exception as e:
-                print(f"WARNING: Could not get injured player names: {e}")
-        # Save prediction to stats_nba collection
-        home_win_prob = prediction.get('home_win_prob', 0)
-        away_win_prob = 100 - home_win_prob
-        # Calculate American odds for each team
-        def calculate_odds(prob_percent):
-            """Calculate American odds from probability percentage."""
-            prob = prob_percent / 100.0
-            if prob >= 0.5:
-                return int(-100 * prob / (1 - prob))
-            else:
-                return int(100 * (1 - prob) / prob)
-            
-        home_odds = calculate_odds(home_win_prob)
-        away_odds = calculate_odds(away_win_prob)
-        # Parse date components
-        year = game_date.year
-        month = game_date.month
-        day = game_date.day
-        print(f"DEBUG: Saving prediction for game_id={game_id}, date={game_date_str} (parsed as {game_date}), home={home_team}, away={away_team}")
-        print(f"DEBUG: points_prediction is set: {points_prediction is not None}, selected_points_config exists: {selected_points_config is not None}")
-        if points_prediction:
-            print(f"DEBUG: points_prediction keys: {list(points_prediction.keys())}")
-            print(f"DEBUG: points_prediction values: home_points={points_prediction.get('home_points')}, away_points={points_prediction.get('away_points')}, point_diff_pred={points_prediction.get('point_diff_pred')}")
-        elif selected_points_config:
-            print(f"DEBUG: ⚠️ WARNING: points_prediction is None but selected_points_config exists. This means prediction generation failed or returned None.")
-        # Check if game entry exists
-        existing_game = db.stats_nba.find_one({'game_id': game_id})
-        print(f"DEBUG: Existing game found: {existing_game is not None}")
-        # Build update document with both classifier and points predictions
-        last_prediction = {
-            'predicted_winner': prediction.get('predicted_winner'),
-            'home_win_prob': home_win_prob,
-            'away_win_prob': away_win_prob,
-            'home_odds': home_odds,
-            'away_odds': away_odds,
-            'odds': prediction.get('odds'),  # Keep original odds for predicted winner
-            'predicted_at': datetime.utcnow().isoformat(),
-            'features_dict': prediction.get('features_dict'),  # Store features for display
-            'home_injured_players': home_injured_players,  # Store injured player names
-            'away_injured_players': away_injured_players,  # Store injured player names
-            'feature_players': feature_players  # Store player lists for each player feature
-        }
-        # Add points predictions from selected points model config
-        # Always use the selected model_config_points_nba for storing home_points_pred and away_points_pred
-        if points_prediction:
-            print(f"DEBUG: Storing points predictions in last_prediction. Keys in points_prediction: {list(points_prediction.keys())}")
-            # PointsRegressionTrainer.predict() returns 'home_points' and 'away_points' (not 'home_points_pred')
-            home_points = points_prediction.get('home_points')
-            away_points = points_prediction.get('away_points')
-            print(f"DEBUG: home_points={home_points} (type: {type(home_points)}), away_points={away_points} (type: {type(away_points)})")
-            # For home/away models, store the predictions
-            # Note: We check explicitly for None because 0.0 is a valid prediction value
-            if home_points is not None and away_points is not None:
-                last_prediction['home_points_pred'] = round(float(home_points))
-                last_prediction['away_points_pred'] = round(float(away_points))
-                point_total = points_prediction.get('point_total_pred')
-                if point_total is not None:
-                    last_prediction['point_total_pred'] = round(float(point_total))
-                else:
-                    # Calculate if not provided
-                    last_prediction['point_total_pred'] = round(float(home_points) + float(away_points))
-                print(f"DEBUG: ✓ Stored home_points_pred={last_prediction['home_points_pred']}, away_points_pred={last_prediction['away_points_pred']}, point_total_pred={last_prediction['point_total_pred']}")
-            else:
-                print(f"WARNING: home_points or away_points is None - this appears to be a margin-only model. home_points={home_points}, away_points={away_points}")
-                # For margin-only models, home_points and away_points will be None
-                # Still store the margin prediction if available
-                point_diff = points_prediction.get('point_diff_pred')
-                if point_diff is not None:
-                    last_prediction['point_diff_pred'] = round(float(point_diff))
-                    print(f"DEBUG: ✓ Stored point_diff_pred={last_prediction['point_diff_pred']}")
-                else:
-                    print(f"DEBUG: point_diff_pred is None in points_prediction")
-        else:
-            if selected_points_config is None:
-                print(f"DEBUG: No points_prediction available - no selected points model config found. Please select a points model config in the model-config-points page.")
-            else:
-                print(f"DEBUG: ⚠️ No points_prediction available even though selected_points_config exists. Prediction may have failed. Check error logs above.")
-            # No fallback - if selected points model is not available, these fields will be omitted
-        
-        # Always update the database with the prediction (regardless of whether points_prediction exists)
-        update_doc = {
-            '$set': {
-                'last_prediction': last_prediction
-            }
-        }
-        # If game doesn't exist, create it with basic fields
-        if not existing_game:
-            print(f"DEBUG: Creating new game entry with game_id={game_id}")
-            update_doc['$set'].update({
-                'game_id': game_id,
-                'date': game_date_str,
-                'year': year,
-                'month': month,
-                'day': day,
-                'season': season,
-                'game_type': 'regseason',  # Default to regular season
-                'espn_link': f"https://www.espn.com/nba/boxscore/_/gameId/{game_id}",
-                'homeTeam': {
-                    'name': home_team
-                },
-                'awayTeam': {
-                    'name': away_team
-                }
-            })
-        else:
-            print(f"DEBUG: Updating existing game entry")
-            # If game exists but missing basic fields, add them using dot notation
-            if not existing_game.get('date'):
-                update_doc['$set']['date'] = game_date_str
-            if not existing_game.get('year'):
-                update_doc['$set']['year'] = year
-            if not existing_game.get('month'):
-                update_doc['$set']['month'] = month
-            if not existing_game.get('day'):
-                update_doc['$set']['day'] = day
-            if not existing_game.get('season'):
-                update_doc['$set']['season'] = season
-            if not existing_game.get('espn_link'):
-                update_doc['$set']['espn_link'] = f"https://www.espn.com/nba/boxscore/_/gameId/{game_id}"
-            if not existing_game.get('game_type'):
-                update_doc['$set']['game_type'] = 'regseason'  # Default to regular season
-            # Handle nested homeTeam and awayTeam fields
-            if not existing_game.get('homeTeam'):
-                update_doc['$set']['homeTeam'] = {'name': home_team}
-            elif not existing_game.get('homeTeam', {}).get('name'):
-                update_doc['$set']['homeTeam.name'] = home_team
-            if not existing_game.get('awayTeam'):
-                update_doc['$set']['awayTeam'] = {'name': away_team}
-            elif not existing_game.get('awayTeam', {}).get('name'):
-                update_doc['$set']['awayTeam.name'] = away_team
-        
-        print(f"DEBUG: Update document keys in $set: {list(update_doc['$set'].keys())}")
-        print(f"DEBUG: Full update document: {update_doc}")
-        # Update or create game entry - this MUST succeed or we should fail
-        result = db.stats_nba.update_one(
-            {'game_id': game_id},
-            update_doc,
-            upsert=True  # Create entry if game doesn't exist
+
+        # Check for errors
+        if result.error:
+            return jsonify({'success': False, 'error': result.error}), 400
+
+        # Save prediction to database
+        service.save_prediction(
+            result=result,
+            game_id=game_id,
+            game_date=game_date,
+            home_team=home_team,
+            away_team=away_team
         )
-        print(f"DEBUG: MongoDB update result - matched: {result.matched_count}, modified: {result.modified_count}, upserted_id: {result.upserted_id}")
-        # Verify the save worked - if it didn't, this is a critical error
-        verify_game = db.stats_nba.find_one({'game_id': game_id})
-        if not verify_game:
-            error_msg = f"CRITICAL: Game was not saved to database! game_id={game_id}"
-            print(f"ERROR: {error_msg}")
-            import traceback
-            traceback.print_exc()
-            # Return error - don't silently fail
-            return jsonify({
-                'success': False,
-                'error': error_msg
-            }), 500
-        # Verify last_prediction was saved
-        if 'last_prediction' not in verify_game:
-            error_msg = f"CRITICAL: last_prediction was not saved! game_id={game_id}"
-            print(f"ERROR: {error_msg}")
-            import traceback
-            traceback.print_exc()
-            return jsonify({
-                'success': False,
-                'error': error_msg
-            }), 500
-        print(f"DEBUG: SUCCESS - Verified game saved with last_prediction. game_id={game_id}, date={verify_game.get('date')}")
-        # Verify points predictions were actually stored in the database
-        saved_last_prediction = verify_game.get('last_prediction', {})
-        if points_prediction and selected_points_config:
-            if 'home_points_pred' not in saved_last_prediction or 'away_points_pred' not in saved_last_prediction:
-                print(f"DEBUG: ⚠️ WARNING: points_prediction was generated but home_points_pred/away_points_pred were NOT stored in database!")
-                print(f"DEBUG: saved_last_prediction keys: {list(saved_last_prediction.keys())}")
-                print(f"DEBUG: saved_last_prediction content: {saved_last_prediction}")
-            else:
-                print(f"DEBUG: ✓ Verified points predictions stored: home_points_pred={saved_last_prediction.get('home_points_pred')}, away_points_pred={saved_last_prediction.get('away_points_pred')}")
-        # Include odds and points in response for frontend badge updates
+
+        # Build response
         prediction_response = {
-            'predicted_winner': prediction.get('predicted_winner'),
-            'home_win_prob': home_win_prob,
-            'away_win_prob': away_win_prob,
-            'home_odds': home_odds,
-            'away_odds': away_odds,
-            'odds': prediction.get('odds'),
-            'home_points_pred': last_prediction.get('home_points_pred'),
-            'away_points_pred': last_prediction.get('away_points_pred'),
-            'point_total_pred': last_prediction.get('point_total_pred'),
-            'point_diff_pred': last_prediction.get('point_diff_pred'),
-            'home_pts': prediction.get('home_pts'),
-            'away_pts': prediction.get('away_pts')
+            'predicted_winner': result.predicted_winner,
+            'home_win_prob': result.home_win_prob,
+            'away_win_prob': result.away_win_prob,
+            'home_odds': result.home_odds,
+            'away_odds': result.away_odds,
+            'home_points_pred': result.home_points_pred,
+            'away_points_pred': result.away_points_pred,
+            'point_diff_pred': result.point_diff_pred
         }
-        response_data = {
+
+        return jsonify({
             'success': True,
             'prediction': prediction_response
-        }
-        # Add training CSV path if available
-        if training_csv and os.path.exists(training_csv):
-            response_data['training_csv'] = training_csv
-        
-        return jsonify(response_data)
+        })
+
     except Exception as e:
         import traceback
         traceback.print_exc()
-        return jsonify({'error': str(e)}), 500
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 
+@app.route('/<league_id>/api/game-features', methods=['POST'])
 @app.route('/api/game-features', methods=['POST'])
-def get_game_features():
+def get_game_features(league_id=None):
     """Get feature values used for a game prediction."""
     data = request.json
     if not data:
@@ -3393,31 +3251,34 @@ def get_game_features():
     if not all([game_id, game_date_str, home_team, away_team]):
         return jsonify({'success': False, 'error': 'Missing required fields'}), 400
     try:
+        # Get league-aware collection names
+        league = g.league
+        games_collection = league.collections.get('games', 'stats_nba')
+        predictions_collection = league.collections.get('model_predictions', 'nba_model_predictions')
+        classifier_config_collection = league.collections.get('model_config_classifier', 'model_config_nba')
+
         # Get game document
-        game_doc = db.stats_nba.find_one({'game_id': game_id})
+        game_doc = db[games_collection].find_one({'game_id': game_id})
         if not game_doc:
             return jsonify({'success': False, 'error': f'Game not found: {game_id}'}), 404
-        # Get stored features from last_prediction
-        last_prediction = game_doc.get('last_prediction')
+
+        # Get prediction from model_predictions collection (not from game document)
+        last_prediction = db[predictions_collection].find_one({'game_id': game_id})
         if not last_prediction:
             return jsonify({'success': False, 'error': 'No prediction found for this game. Please run predictions first.'}), 404
         features_dict = last_prediction.get('features_dict')
         if not features_dict:
             return jsonify({'success': False, 'error': 'No feature values stored for this prediction. Please run predictions again.'}), 404
-        
+
         # Get player lists for player features
         feature_players = last_prediction.get('feature_players', {})
-        # Get selected classifier model to get feature_names for categorization
-        model = get_nba_model()
-        selected_config = db.model_config_nba.find_one({'selected': True})
-        if not selected_config:
-            return jsonify({'success': False, 'error': 'No selected classifier model found'}), 404
-            
-        # Load model from config to get feature_names
-        if not load_model_from_mongo_config(model, selected_config):
-            return jsonify({'success': False, 'error': 'Failed to load model from config'}), 500
-            
+
+        # Get feature names from the prediction itself (no need to load model)
+        # Filter out internal metadata fields (starting with _)
+        feature_names = [k for k in features_dict.keys() if not k.startswith('_')]
+
         # Organize features by category for display
+        # Note: ensemble_outputs removed - base model predictions now shown via ensemble_breakdown
         feature_categories = {
             'outcome_strength': [],
             'shooting_efficiency': [],
@@ -3433,12 +3294,16 @@ def get_game_features():
             'injuries': [],
             'point_predictions': []
         }
-            
+
         # Categorize features
-        for feature_name in model.feature_names:
+        for feature_name in feature_names:
             value = features_dict.get(feature_name, 0.0)
             feature_lower = feature_name.lower()
-                
+
+            # Skip ensemble meta-features (p_*, conf_*, disagree_*) - shown in ensemble_breakdown section
+            if feature_name.startswith('p_') or feature_name.startswith('conf_') or feature_name.startswith('disagree_'):
+                continue
+
             if feature_name.startswith('pred_'):
                 feature_categories['point_predictions'].append({'name': feature_name, 'value': value})
             elif feature_name.startswith('inj_'):
@@ -3473,7 +3338,10 @@ def get_game_features():
         # Get injured player names from last_prediction
         home_injured_players = last_prediction.get('home_injured_players', [])
         away_injured_players = last_prediction.get('away_injured_players', [])
-            
+
+        # Get ensemble breakdown if present (for base model feature values)
+        ensemble_breakdown = features_dict.get('_ensemble_breakdown')
+
         return jsonify({
             'success': True,
             'game_id': game_id,
@@ -3484,15 +3352,17 @@ def get_game_features():
             'home_injured_players': home_injured_players,
             'away_injured_players': away_injured_players,
             'feature_players': feature_players,  # Player lists for each player feature
-            'total_features': len(model.feature_names)
+            'total_features': len(feature_names),
+            'ensemble_breakdown': ensemble_breakdown  # Base model feature values for ensemble models
         })
     except Exception as e:
         import traceback
         traceback.print_exc()
         return jsonify({'success': False, 'error': str(e)}), 500
         
+@app.route('/<league_id>/api/calculation-details', methods=['POST'])
 @app.route('/api/calculation-details', methods=['POST'])
-def get_calculation_details():
+def get_calculation_details(league_id=None):
     """Get calculation details for a team including players, features, and stats."""
     data = request.json
     
@@ -3726,14 +3596,15 @@ def get_calculation_details():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+@app.route('/<league_id>/api/download-master-training', methods=['GET'])
 @app.route('/api/download-master-training', methods=['GET'])
-def download_master_training():
+def download_master_training(league_id=None):
     """Download the master training data CSV file."""
     try:
-        from nba_app.cli.master_training_data import MASTER_TRAINING_PATH
-        if os.path.exists(MASTER_TRAINING_PATH):
+        master_training_path = get_master_training_path()
+        if os.path.exists(master_training_path):
             return send_file(
-                MASTER_TRAINING_PATH,
+                master_training_path,
                 as_attachment=True,
                 download_name='MASTER_TRAINING.csv',
                 mimetype='text/csv'
@@ -3743,8 +3614,9 @@ def download_master_training():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+@app.route('/<league_id>/api/download-config-training', methods=['GET'])
 @app.route('/api/download-config-training', methods=['GET'])
-def download_config_training():
+def download_config_training(league_id=None):
     """Download the training data CSV file for the current model configuration."""
     try:
         # Get training CSV from current selected config
@@ -3791,507 +3663,258 @@ def download_config_training():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+@app.route('/<league_id>/api/pull-game-data', methods=['POST'])
 @app.route('/api/pull-game-data', methods=['POST'])
-def pull_game_data():
-    """Pull game data from ESPN API for a given date."""
+def pull_game_data(league_id=None):
+    """
+    Pull game data from ESPN API for a given date.
+
+    Thin wrapper around core sync_pipeline - spins off background job
+    and returns job_id for frontend polling.
+    """
+    from nba_app.core.services.jobs import create_job, update_job_progress, complete_job, fail_job
+    from nba_app.core.league_config import load_league_config
+
     data = request.json
     date_str = data.get('date')
-    
+
     if not date_str:
         return jsonify({'success': False, 'error': 'Missing date parameter'}), 400
-    
+
     try:
-        # Parse date string (YYYY-MM-DD) and convert to YYYYMMDD format for espn_api
+        # Validate date format
         game_date = datetime.strptime(date_str, '%Y-%m-%d').date()
-        date_formatted = game_date.strftime('%Y%m%d')
-        
-        # Call espn_api fetch_dates function (equivalent to espn_api.py --dates YYYYMMDD)
-        # This will pull team stats and player stats (master training updates are handled separately)
-        dates = parse_date_range(date_formatted)
-        fetch_dates(dates, team_only=False, players_only=False, dry_run=False)
-        
-        # Count games with homeWon after pull
-        games_with_homewon = db.stats_nba.count_documents({
-            'date': date_str,
-            'homeWon': {'$exists': True}
-        })
-        
-        # Count total games for this date (from stats_nba)
-        total_games = db.stats_nba.count_documents({
-            'date': date_str
-        })
-        
-        # Count games in master training data for this date
-        games_in_master = 0
+    except ValueError:
+        return jsonify({'success': False, 'error': 'Invalid date format'}), 400
+
+    # Create job and return immediately
+    league = g.league
+    league_id_str = league.league_id if league else 'nba'
+    jobs_collection_name = league.collections.get('jobs', 'jobs_nba') if league else 'jobs_nba'
+    logger.info(f"[SYNC] Creating sync job for date={date_str}, league={league_id_str}, jobs_collection={jobs_collection_name}")
+    job_id = create_job(
+        job_type='sync',
+        league=league,
+        metadata={'date': date_str, 'league': league_id_str}
+    )
+    logger.info(f"[SYNC] Created job_id={job_id}")
+
+    def run_sync_background(job_id: str, date_str: str, league_id: str):
+        """Background worker for data sync."""
+        from nba_app.core.pipeline.sync_pipeline import run_sync_pipeline
+
+        logger.info(f"[SYNC BG] Starting background sync for job {job_id}, date={date_str}, league={league_id}")
+
         try:
-            from nba_app.cli.master_training_data import MASTER_TRAINING_PATH
-            import pandas as pd
-            if os.path.exists(MASTER_TRAINING_PATH):
-                # Read master CSV and count games for this date
-                try:
-                    df = pd.read_csv(MASTER_TRAINING_PATH, on_bad_lines='skip', engine='python')
-                except TypeError:
-                    df = pd.read_csv(MASTER_TRAINING_PATH, error_bad_lines=False, warn_bad_lines=True, engine='python')
-                
-                # Filter for games matching this date
-                year, month, day = game_date.year, game_date.month, game_date.day
-                date_matches = (df['Year'] == year) & (df['Month'] == month) & (df['Day'] == day)
-                games_in_master = int(date_matches.sum())
+            # Load league config fresh (not from Flask context)
+            league_config = load_league_config(league_id)
+            from nba_app.core.mongo import Mongo
+            bg_db = Mongo().db
+
+            game_date = datetime.strptime(date_str, '%Y-%m-%d').date()
+
+            # Update progress: starting sync
+            logger.info(f"[SYNC BG] Job {job_id}: updating progress to 10%")
+            update_job_progress(job_id, 10, 'Starting ESPN data sync...', league=league_config)
+
+            # Run sync pipeline (handles games, players, player_stats)
+            logger.info(f"[SYNC BG] Job {job_id}: updating progress to 20%, starting pipeline")
+            update_job_progress(job_id, 20, 'Pulling games and player stats from ESPN...', league=league_config)
+
+            result = run_sync_pipeline(
+                league_config=league_config,
+                start_date=game_date,
+                end_date=game_date,
+                data_types={'games', 'players', 'player_stats'},
+                dry_run=False,
+                verbose=False
+            )
+
+            logger.info(f"[SYNC BG] Job {job_id}: pipeline complete, updating progress to 80%")
+            update_job_progress(job_id, 80, 'Counting synced games...', league=league_config)
+
+            # Get stats for completion message
+            games_collection = league_config.collections.get('games', 'stats_nba')
+            games_with_homewon = bg_db[games_collection].count_documents({
+                'date': date_str,
+                'homeWon': {'$exists': True}
+            })
+            total_games = bg_db[games_collection].count_documents({
+                'date': date_str
+            })
+
+            logger.info(f"[SYNC BG] Job {job_id}: calling complete_job with {total_games} games")
+            complete_job(
+                job_id,
+                f'Synced {total_games} games ({games_with_homewon} completed)',
+                league=league_config
+            )
+            logger.info(f"[SYNC BG] Job {job_id}: complete_job finished")
+
         except Exception as e:
-            # If we can't read the master file, just set to 0
-            print(f"Warning: Could not read master training data to count games: {e}")
-            games_in_master = 0
-        
-        return jsonify({
-            'success': True,
-            'games_processed': len(dates),
-            'games_pulled': games_with_homewon,
-            'total_games': total_games,
-            'games_in_master': games_in_master
-        })
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        return jsonify({'success': False, 'error': str(e)}), 500
+            import traceback
+            logger.error(f"[SYNC BG] Job {job_id} failed with exception: {e}")
+            traceback.print_exc()
+            try:
+                league_config = load_league_config(league_id)
+                fail_job(job_id, str(e), f'Sync failed: {str(e)}', league=league_config)
+            except Exception as e2:
+                logger.error(f"[SYNC BG] Job {job_id} failed to call fail_job: {e2}")
+
+    # Start background thread
+    thread = threading.Thread(
+        target=run_sync_background,
+        args=(job_id, date_str, league_id_str),
+        daemon=True
+    )
+    thread.start()
+
+    return jsonify({
+        'success': True,
+        'job_id': job_id,
+        'message': 'Sync job started'
+    })
 
 
+@app.route('/<league_id>/api/predict-all', methods=['POST'])
 @app.route('/api/predict-all', methods=['POST'])
-def predict_all():
-    """Generate predictions for all games on a given date."""
+def predict_all(league_id=None):
+    """
+    Generate predictions for all games on a given date.
+
+    Thin wrapper around core PredictionService - spins off background job
+    and returns job_id for frontend polling.
+    """
+    from nba_app.core.services.jobs import create_job, update_job_progress, complete_job, fail_job
+    from nba_app.core.services.prediction import PredictionService
+    from nba_app.core.league_config import load_league_config
+
     data = request.json
     date_str = data.get('date')
-    
+
     if not date_str:
         return jsonify({'success': False, 'error': 'Missing date parameter'}), 400
-    
+
     try:
         game_date = datetime.strptime(date_str, '%Y-%m-%d').date()
     except ValueError:
-        return jsonify({'error': 'Invalid date format'}), 400
-    
-    season = get_season_from_date(game_date)
-    
-    # Load selected configs first to check if they exist but haven't been trained
-    selected_classifier_config = None
-    selected_points_config = None
-    try:
-        selected_classifier_config = db.model_config_nba.find_one({'selected': True})
-    except Exception as e:
-        print(f"DEBUG: Could not load selected classifier config in predict-all: {e}")
-    try:
-        selected_points_config = db.model_config_points_nba.find_one({'selected': True})
-    except Exception as e:
-        print(f"DEBUG: Could not load selected points config in predict-all: {e}")
-    
-    # Validate that the selected config is trained and ready for predictions
-    # Uses shared validation logic from core/config_manager.py
+        return jsonify({'success': False, 'error': 'Invalid date format'}), 400
+
+    # Validate config before starting job
+    league = g.league
+    classifier_config_collection = league.collections.get('model_config_classifier', 'model_config_nba')
+    selected_classifier_config = db[classifier_config_collection].find_one({'selected': True})
+
     is_valid, error_msg = ModelConfigManager.validate_config_for_prediction(selected_classifier_config)
     if not is_valid:
         return jsonify({'success': False, 'error': error_msg}), 400
 
-    # Get model
-    model = get_nba_model()
+    # Create job and return immediately
+    league_id_str = league.league_id if league else 'nba'
+    job_id = create_job(
+        job_type='predict_all',
+        league=league,
+        metadata={'date': date_str, 'league': league_id_str}
+    )
 
-    # Regular models require a loaded classifier_model.
-    # Ensembles are loaded via ensemble_run_id/meta-model artifacts and do not set classifier_model.
-    is_ensemble_selected = bool(selected_classifier_config and selected_classifier_config.get('ensemble', False))
-    is_ensemble_loaded = bool(getattr(model, 'is_ensemble', False))
-
-    if not model or (not model.classifier_model and not (is_ensemble_selected and is_ensemble_loaded)):
-        if selected_classifier_config:
-            return jsonify({
-                'success': False,
-                'error': f'The selected model config "{selected_classifier_config.get("name", "Unnamed")}" could not be loaded. Please train the model again.'
-            }), 400
-        else:
-            return jsonify({
-                'success': False,
-                'error': 'No model config selected and no cached model found. Please select and train a model config first.'
-            }), 400
-    
-    # Get games for this date from ESPN API
-    scoreboard = get_scoreboard(game_date)
-    games = []
-    
-    if scoreboard:
-        for sport in scoreboard.get('sports', []):
-            for league in sport.get('leagues', []):
-                for event in league.get('events', []):
-                    game_id = event.get('id')
-                    if not game_id:
-                        continue
-                    
-                    home_team = None
-                    away_team = None
-                    
-                    # Try multiple ways to get team info
-                    odds = event.get('odds', {})
-                    if odds:
-                        away_odds = odds.get('awayTeamOdds', {})
-                        home_odds = odds.get('homeTeamOdds', {})
-                        
-                        if away_odds and away_odds.get('team'):
-                            away_team = away_odds['team'].get('abbreviation', '').upper()
-                        if home_odds and home_odds.get('team'):
-                            home_team = home_odds['team'].get('abbreviation', '').upper()
-                    
-                    if not home_team or not away_team:
-                        short_name = event.get('shortName', '')
-                        if '@' in short_name:
-                            parts = short_name.split('@')
-                            if len(parts) == 2:
-                                away_team = parts[0].strip().upper()
-                                home_team = parts[1].strip().upper()
-                    
-                    if not home_team or not away_team:
-                        competitors = event.get('competitions', [])
-                        if competitors and len(competitors) > 0:
-                            comp_list = competitors[0].get('competitors', [])
-                            if len(comp_list) == 2:
-                                for comp in comp_list:
-                                    if comp.get('homeAway') == 'home':
-                                        home_team = comp.get('team', {}).get('abbreviation', '').upper()
-                                    else:
-                                        away_team = comp.get('team', {}).get('abbreviation', '').upper()
-                    
-                    if home_team and away_team:
-                        games.append({
-                            'game_id': game_id,
-                            'home_team': home_team,
-                            'away_team': away_team
-                        })
-    
-    if not games:
-        return jsonify({'success': False, 'error': 'No games found for this date'}), 400
-    
-    # Calculate odds helper
-    def calculate_odds(prob_percent):
-        prob = prob_percent / 100.0
-        if prob >= 0.5:
-            return int(-100 * prob / (1 - prob))
-        else:
-            return int(100 * (1 - prob) / prob)
-    
-    # Generate predictions for each game
-    results = []
-    errors = []
-    
-    for game in games:
-        game_id = game['game_id']
-        home_team = game['home_team']
-        away_team = game['away_team']
-        
+    def run_predictions_background(job_id: str, date_str: str, league_id: str):
+        """Background worker for predictions."""
         try:
-            # Build player_filters from nba_rosters (source of truth)
-            # Priority: Use stats_nba.{home/away}Team.players if game has been clicked into
-            # Otherwise: Use nba_rosters roster
-            # Injury/starter status always comes from nba_rosters
-            
-            # Get game document to check if players list is populated
-            game_doc = db.stats_nba.find_one({'game_id': game_id})
-            
-            # Get rosters for injury/starter status (always from nba_rosters)
-            home_roster_doc = db.nba_rosters.find_one({'season': season, 'team': home_team})
-            away_roster_doc = db.nba_rosters.find_one({'season': season, 'team': away_team})
-            
-            # Build roster maps for quick lookup
-            home_roster_map = {}
-            away_roster_map = {}
-            if home_roster_doc:
-                for entry in home_roster_doc.get('roster', []):
-                    player_id = str(entry.get('player_id', ''))
-                    home_roster_map[player_id] = {
-                        'injured': entry.get('injured', False),
-                        'starter': entry.get('starter', False)
-                    }
-            if away_roster_doc:
-                for entry in away_roster_doc.get('roster', []):
-                    player_id = str(entry.get('player_id', ''))
-                    away_roster_map[player_id] = {
-                        'injured': entry.get('injured', False),
-                        'starter': entry.get('starter', False)
-                    }
-            
-            # Determine base player lists
-            # Priority 1: Use stats_nba.{home/away}Team.players if populated (game has been clicked into)
-            # Priority 2: Use nba_rosters roster
-            home_base_players = []
-            away_base_players = []
-            
-            if game_doc:
-                home_players_list = game_doc.get('homeTeam', {}).get('players', [])
-                away_players_list = game_doc.get('awayTeam', {}).get('players', [])
-                
-                if home_players_list:
-                    # Game has been clicked into - use stats_nba players list
-                    home_base_players = [str(pid) for pid in home_players_list]
-                elif home_roster_doc:
-                    # Use nba_rosters roster
-                    home_base_players = [str(entry.get('player_id', '')) for entry in home_roster_doc.get('roster', [])]
-                
-                if away_players_list:
-                    # Game has been clicked into - use stats_nba players list
-                    away_base_players = [str(pid) for pid in away_players_list]
-                elif away_roster_doc:
-                    # Use nba_rosters roster
-                    away_base_players = [str(entry.get('player_id', '')) for entry in away_roster_doc.get('roster', [])]
-            else:
-                # No game doc - use nba_rosters
-                if home_roster_doc:
-                    home_base_players = [str(entry.get('player_id', '')) for entry in home_roster_doc.get('roster', [])]
-                if away_roster_doc:
-                    away_base_players = [str(entry.get('player_id', '')) for entry in away_roster_doc.get('roster', [])]
-            
-            # Build player_filters: filter by injured status and get starters from nba_rosters
-            home_playing = []
-            home_starters = []
-            for player_id in home_base_players:
-                roster_info = home_roster_map.get(player_id, {})
-                is_injured = roster_info.get('injured', False)
-                is_starter = roster_info.get('starter', False)
-                
-                if not is_injured:
-                    home_playing.append(player_id)
-                    if is_starter:
-                        home_starters.append(player_id)
-            
-            away_playing = []
-            away_starters = []
-            for player_id in away_base_players:
-                roster_info = away_roster_map.get(player_id, {})
-                is_injured = roster_info.get('injured', False)
-                is_starter = roster_info.get('starter', False)
-                
-                if not is_injured:
-                    away_playing.append(player_id)
-                    if is_starter:
-                        away_starters.append(player_id)
-            
-            player_filters = {
-                home_team: {
-                    'playing': home_playing,
-                    'starters': home_starters
-                },
-                away_team: {
-                    'playing': away_playing,
-                    'starters': away_starters
-                }
-            }
-            
-            # ALWAYS get points prediction from selected points model config (if available)
-            # This is used both for:
-            # 1. Providing pred_margin as a feature if the classifier model expects it
-            # 2. Storing home_points_pred and away_points_pred in last_prediction for display
-            points_prediction = None
-            additional_features = None  # Will contain pred_margin if model expects it
-            
-            # Check if the classifier model expects pred_margin as a feature
-            needs_pred_margin = hasattr(model, 'feature_names') and model.feature_names and 'pred_margin' in model.feature_names
-            
-            # Get points prediction from selected points model config (if available)
-            # We do this BEFORE making the classifier prediction so we can use pred_margin as a feature if needed
-            if selected_points_config:
-                points_trainer = get_points_model_trainer(preloaded_selected_config=selected_points_config)
-                if points_trainer:
-                    try:
-                        # Get game document for points prediction
-                        game_doc = db.stats_nba.find_one({'game_id': game_id})
-                        if not game_doc:
-                            # Create minimal game doc for prediction
-                            game_doc = {
-                                'game_id': game_id,
-                                'date': date_str,
-                                'year': game_date.year,
-                                'month': game_date.month,
-                                'day': game_date.day,
-                                'season': season,
-                                'homeTeam': {'name': home_team},
-                                'awayTeam': {'name': away_team}
-                            }
-                        
-                        # Make points prediction
-                        points_prediction = points_trainer.predict(game_doc, date_str)
-                        
-                        # If the classifier model expects pred_margin, extract it from the points prediction
-                        if needs_pred_margin:
-                            pred_margin = None
-                            # Check if it's a margin-only model (returns point_diff_pred directly)
-                            if 'point_diff_pred' in points_prediction and points_prediction['point_diff_pred'] is not None:
-                                pred_margin = points_prediction['point_diff_pred']
-                            elif 'home_points' in points_prediction and 'away_points' in points_prediction:
-                                # Home/away model - derive margin from home_points and away_points
-                                pred_home = points_prediction.get('home_points', 0) or 0
-                                pred_away = points_prediction.get('away_points', 0) or 0
-                                pred_margin = pred_home - pred_away
-                            
-                            if pred_margin is not None:
-                                additional_features = {'pred_margin': pred_margin}
-                    except Exception as e:
-                        print(f"DEBUG: Error making points prediction for {game_id}: {e}")
-                        import traceback
-                        traceback.print_exc()
-                        # Continue without points prediction - classifier prediction can still proceed
-            
-            # Make prediction with full-roster player filters
-            prediction = model.predict_with_player_config(
-                home_team, away_team, season, date_str, player_filters,
-                additional_features=additional_features
+            # Load league config fresh (not from Flask context)
+            league_config = load_league_config(league_id)
+            from nba_app.core.mongo import Mongo
+            bg_db = Mongo().db
+
+            # Use core PredictionService with job_id for progress tracking
+            service = PredictionService(db=bg_db, league=league_config)
+
+            # predict_date() updates job progress internally at:
+            # 10% - Fetching matchups
+            # 15% - Loading models
+            # 20% - Starting predictions
+            # 20-90% - Per-game progress
+            results = service.predict_date(
+                game_date=date_str,
+                include_points=True,
+                job_id=job_id
             )
-            
-            # Get injured player names if injury features are being used
-            home_injured_players = []
-            away_injured_players = []
-            if hasattr(model, 'stat_handler') and model.stat_handler:
+
+            # Save each prediction (90-100% progress)
+            update_job_progress(job_id, 90, 'Saving predictions...', league=league_config)
+
+            successful = 0
+            failed = 0
+            game_date_obj = datetime.strptime(date_str, '%Y-%m-%d').date()
+
+            for result in results:
+                if result.error:
+                    failed += 1
+                    continue
+
                 try:
-                    # Check if model uses injury features
-                    has_injury_features = hasattr(model, 'feature_names') and model.feature_names and any(
-                        fname.startswith('inj_')
-                        for fname in model.feature_names
+                    service.save_prediction(
+                        result=result,
+                        game_id=result.game_id,
+                        game_date=game_date_obj,
+                        home_team=result.home_team,
+                        away_team=result.away_team
                     )
-                    if has_injury_features:
-                        injury_features_result = model.stat_handler.get_injury_features(
-                            home_team, away_team, season, game_date.year, game_date.month, game_date.day,
-                            game_doc=db.stats_nba.find_one({'game_id': game_id}),
-                            per_calculator=model.per_calculator if hasattr(model, 'per_calculator') else None,
-                            recency_decay_k=getattr(model, 'recency_decay_k', 15.0)
-                        )
-                        if injury_features_result:
-                            home_injured_players = injury_features_result.get('home_injured_players', [])
-                            away_injured_players = injury_features_result.get('away_injured_players', [])
+                    successful += 1
                 except Exception as e:
-                    print(f"WARNING: Could not get injured player names for {game_id}: {e}")
-            
-            # Calculate odds
-            home_win_prob = prediction.get('home_win_prob', 0)
-            away_win_prob = 100 - home_win_prob
-            home_odds = calculate_odds(home_win_prob)
-            away_odds = calculate_odds(away_win_prob)
-            
-            # Parse date components
-            year = game_date.year
-            month = game_date.month
-            day = game_date.day
-            
-            # Build update document with both classifier and points predictions
-            last_prediction = {
-                'predicted_winner': prediction.get('predicted_winner'),
-                'home_win_prob': home_win_prob,
-                'away_win_prob': away_win_prob,
-                'home_odds': home_odds,
-                'away_odds': away_odds,
-                'odds': prediction.get('odds'),
-                'predicted_at': datetime.utcnow().isoformat(),
-                'features_dict': prediction.get('features_dict'),  # Store features for display
-                'home_injured_players': home_injured_players,  # Store injured player names
-                'away_injured_players': away_injured_players  # Store injured player names
-            }
-            
-            # Add points predictions from selected points model config
-            # Always use the selected model_config_points_nba for storing home_points_pred and away_points_pred
-            if points_prediction:
-                # PointsRegressionTrainer.predict() returns 'home_points' and 'away_points' (not 'home_points_pred')
-                home_points = points_prediction.get('home_points')
-                away_points = points_prediction.get('away_points')
-                
-                # For home/away models, store the predictions
-                if home_points is not None and away_points is not None:
-                    last_prediction['home_points_pred'] = round(home_points)
-                    last_prediction['away_points_pred'] = round(away_points)
-                    last_prediction['point_total_pred'] = round(points_prediction.get('point_total_pred', home_points + away_points))
-                # For margin-only models, home_points and away_points will be None
-                # Still store the margin prediction
-                if points_prediction.get('point_diff_pred') is not None:
-                    last_prediction['point_diff_pred'] = round(points_prediction.get('point_diff_pred'))
-            else:
-                if selected_points_config is None:
-                    print(f"DEBUG: No points_prediction available for {game_id} - no selected points model config found. Please select a points model config in the model-config-points page.")
-                else:
-                    print(f"DEBUG: No points_prediction available for {game_id} - prediction may have failed. Check error logs above.")
-            # No fallback - if selected points model is not available, these fields will be omitted
-            
-            update_doc = {
-                '$set': {
-                    'last_prediction': last_prediction
-                }
-            }
-            
-            # Check if game exists
-            existing_game = db.stats_nba.find_one({'game_id': game_id})
-            
-            if not existing_game:
-                update_doc['$set'].update({
-                    'game_id': game_id,
-                    'date': date_str,
-                    'year': year,
-                    'month': month,
-                    'day': day,
-                    'season': season,
-                    'game_type': 'regseason',
-                    'espn_link': f"https://www.espn.com/nba/boxscore/_/gameId/{game_id}",
-                    'homeTeam': {'name': home_team},
-                    'awayTeam': {'name': away_team}
-                })
-            
-            # Save to database
-            db.stats_nba.update_one(
-                {'game_id': game_id},
-                update_doc,
-                upsert=True
+                    print(f"Error saving prediction for {result.game_id}: {e}")
+                    failed += 1
+
+            complete_job(
+                job_id,
+                f'Completed {successful}/{len(results)} predictions',
+                league=league_config
             )
-            
-            results.append({
-                'game_id': game_id,
-                'home_team': home_team,
-                'away_team': away_team,
-                'prediction': {
-                    'home_win_prob': home_win_prob,
-                    'away_win_prob': away_win_prob,
-                    'home_odds': home_odds,
-                    'away_odds': away_odds,
-                    'home_points_pred': last_prediction.get('home_points_pred'),
-                    'away_points_pred': last_prediction.get('away_points_pred'),
-                    'point_total_pred': last_prediction.get('point_total_pred'),
-                    'point_diff_pred': last_prediction.get('point_diff_pred')
-                }
-            })
-            
+
         except Exception as e:
             import traceback
             traceback.print_exc()
-            errors.append({
-                'game_id': game_id,
-                'home_team': home_team,
-                'away_team': away_team,
-                'error': str(e)
-            })
-    
+            try:
+                league_config = load_league_config(league_id)
+                fail_job(job_id, str(e), f'Prediction failed: {str(e)}', league=league_config)
+            except:
+                pass
+
+    # Start background thread
+    thread = threading.Thread(
+        target=run_predictions_background,
+        args=(job_id, date_str, league_id_str),
+        daemon=True
+    )
+    thread.start()
+
     return jsonify({
         'success': True,
-        'results': results,
-        'errors': errors,
-        'total_games': len(games),
-        'successful': len(results),
-        'failed': len(errors)
+        'job_id': job_id,
+        'message': 'Prediction job started'
     })
 
 
 @app.route('/model-config')
-def model_config():
+@app.route('/<league_id>/model-config')
+def model_config(league_id=None):
     """Model configuration page."""
     # Load features directly from MASTER_TRAINING.csv
     feature_sets_dict, feature_set_descriptions = load_features_from_master_csv()
-    
+
     # If CSV loading failed, fallback to feature_sets.py (for backward compatibility)
     if not feature_sets_dict:
         print("Warning: Failed to load features from CSV, falling back to feature_sets.py")
-        from nba_app.cli.feature_sets import FEATURE_SETS, FEATURE_SET_DESCRIPTIONS
+        from nba_app.core.features.sets import FEATURE_SETS, FEATURE_SET_DESCRIPTIONS
         feature_sets_dict = FEATURE_SETS
         feature_set_descriptions = FEATURE_SET_DESCRIPTIONS
-    
+
+    # Get league-aware collection name
+    classifier_config_collection = g.league.collections.get('model_config_classifier', 'model_config_nba')
+
     # Try to load selected config from MongoDB
     default_config = None
     try:
-        selected_config = db.model_config_nba.find_one({'selected': True})
+        selected_config = db[classifier_config_collection].find_one({'selected': True})
         if selected_config:
             default_config = {
                 'model_types': [selected_config.get('model_type')],
@@ -4302,31 +3925,35 @@ def model_config():
         import traceback
         traceback.print_exc()
         pass  # Fall through to None
-    
+
     return render_template(
-        'model_config.html', 
-        feature_sets=feature_sets_dict, 
+        'model_config.html',
+        feature_sets=feature_sets_dict,
         feature_set_descriptions=feature_set_descriptions,
         default_config=default_config
     )
 
 @app.route('/model-config-points')
-def model_config_points():
+@app.route('/<league_id>/model-config-points')
+def model_config_points(league_id=None):
     """Points regression model configuration page."""
     # Load features directly from MASTER_TRAINING.csv (same as /model-config)
     feature_sets_dict, feature_set_descriptions = load_features_from_master_csv()
-    
+
     # If CSV loading failed, fallback to hardcoded feature sets (for backward compatibility)
     if not feature_sets_dict:
         print("Warning: Failed to load features from CSV for points config, falling back to hardcoded sets")
-        from nba_app.cli.points_regression_features import POINTS_FEATURE_SETS, POINTS_FEATURE_SET_DESCRIPTIONS
+        from nba_app.cli_old.points_regression_features import POINTS_FEATURE_SETS, POINTS_FEATURE_SET_DESCRIPTIONS
         feature_sets_dict = dict(POINTS_FEATURE_SETS)
         feature_set_descriptions = POINTS_FEATURE_SET_DESCRIPTIONS
-    
+
+    # Get league-aware collection name
+    points_config_collection = g.league.collections.get('model_config_points', 'model_config_points_nba')
+
     # Try to load selected config from MongoDB
     default_config = None
     try:
-        selected_config = db.model_config_points_nba.find_one({'selected': True})
+        selected_config = db[points_config_collection].find_one({'selected': True})
         if selected_config:
             default_config = {
                 'model_type': selected_config.get('model_type'),
@@ -4345,8 +3972,51 @@ def model_config_points():
     )
 
 
+@app.route('/ensemble-config')
+@app.route('/<league_id>/ensemble-config')
+def ensemble_config(league_id=None):
+    """Ensemble model configuration page."""
+    return render_template('ensemble_config.html')
+
+
+@app.route('/elo-manager')
+@app.route('/<league_id>/elo-manager')
+def elo_manager(league_id=None):
+    """Elo ratings manager page."""
+    return render_template('elo_manager.html')
+
+
+@app.route('/injuries-manager')
+@app.route('/<league_id>/injuries-manager')
+def injuries_manager(league_id=None):
+    """Injuries manager page."""
+    return render_template('injuries_manager.html')
+
+
+@app.route('/cached-league-stats')
+@app.route('/<league_id>/cached-league-stats')
+def cached_league_stats_manager(league_id=None):
+    """Cached league stats manager page."""
+    return render_template('cached_league_stats.html')
+
+
+@app.route('/espn-db-audit')
+@app.route('/<league_id>/espn-db-audit')
+def espn_db_audit_manager(league_id=None):
+    """ESPN DB audit page."""
+    return render_template('espn_db_audit.html')
+
+
+@app.route('/market-dashboard')
+@app.route('/<league_id>/market-dashboard')
+def market_dashboard(league_id=None):
+    """Market dashboard page."""
+    return render_template('market_dashboard.html')
+
+
+@app.route('/<league_id>/api/points-model/configs', methods=['GET'])
 @app.route('/api/points-model/configs', methods=['GET'])
-def get_points_model_configs():
+def get_points_model_configs(league_id=None):
     """Get all points model configurations."""
     try:
         configs = list(db.model_config_points_nba.find({}).sort('trained_at', -1))
@@ -4372,8 +4042,9 @@ def get_points_model_configs():
         }), 500
 
 
+@app.route('/<league_id>/api/points-model/select-config', methods=['POST'])
 @app.route('/api/points-model/select-config', methods=['POST'])
-def select_points_model_config():
+def select_points_model_config(league_id=None):
     """Select or deselect a points model configuration."""
     try:
         data = request.json
@@ -4431,8 +4102,9 @@ def select_points_model_config():
         }), 500
 
 
+@app.route('/<league_id>/api/model-config/save', methods=['POST'])
 @app.route('/api/model-config/save', methods=['POST'])
-def save_model_config():
+def save_model_config(league_id=None):
     """
     Save model configuration from UI.
     Creates/updates configs in model_config_nba collection.
@@ -4682,12 +4354,14 @@ def save_model_config():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+@app.route('/<league_id>/api/model-config/load', methods=['GET'])
 @app.route('/api/model-config/load', methods=['GET'])
-def load_model_config():
+def load_model_config(league_id=None):
     """Load last saved model configuration (backward compatibility)."""
     try:
-        # Try to get selected config from model_config_nba
-        selected_config = db.model_config_nba.find_one({'selected': True})
+        classifier_config_collection = g.league.collections.get('model_config_classifier', 'model_config_nba')
+        # Try to get selected config from league-specific collection
+        selected_config = db[classifier_config_collection].find_one({'selected': True})
         if selected_config:
             # Convert MongoDB document to config format expected by frontend
             config = {
@@ -4721,20 +4395,25 @@ def load_model_config():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+@app.route('/<league_id>/api/model-configs', methods=['GET'])
 @app.route('/api/model-configs', methods=['GET'])
-def get_all_model_configs():
+def get_all_model_configs(league_id=None):
     """Get all model configurations from MongoDB."""
     try:
         import logging
         logger = logging.getLogger(__name__)
+
+        # Get league-aware collection name
+        classifier_config_collection = g.league.collections.get('model_config_classifier', 'model_config_nba')
+
         # Sort by selected status first (selected=True first), then by trained_at descending
         # Use updated_at as fallback for sorting
-        configs = list(db.model_config_nba.find({}).sort([
+        configs = list(db[classifier_config_collection].find({}).sort([
             ('selected', -1),  # True comes before False in descending sort
             ('trained_at', -1),
             ('updated_at', -1)
         ]))
-        
+
         # Enforce exactly one selected
         try:
             selected_configs = [c for c in configs if c.get('selected') is True]
@@ -4742,7 +4421,7 @@ def get_all_model_configs():
                 if len(selected_configs) == 0:
                     # Select the newest (first in current sort by date)
                     primary = configs[0]
-                    db.model_config_nba.update_one(
+                    db[classifier_config_collection].update_one(
                         {'_id': primary['_id']},
                         {'$set': {'selected': True, 'updated_at': datetime.utcnow()}}
                     )
@@ -4761,7 +4440,7 @@ def get_all_model_configs():
                     keep = selected_configs[0]
                     to_unselect_ids = [c['_id'] for c in selected_configs[1:]]
                     if to_unselect_ids:
-                        db.model_config_nba.update_many(
+                        db[classifier_config_collection].update_many(
                             {'_id': {'$in': to_unselect_ids}},
                             {'$set': {'selected': False}}
                         )
@@ -4803,11 +4482,13 @@ def get_all_model_configs():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+@app.route('/<league_id>/api/model-configs/selected', methods=['GET'])
 @app.route('/api/model-configs/selected', methods=['GET'])
-def get_selected_model_config():
+def get_selected_model_config(league_id=None):
     """Get the currently selected model configuration."""
     try:
-        config = db.model_config_nba.find_one({'selected': True})
+        classifier_config_collection = g.league.collections.get('model_config_classifier', 'model_config_nba')
+        config = db[classifier_config_collection].find_one({'selected': True})
         
         if not config:
             return jsonify({
@@ -4833,46 +4514,48 @@ def get_selected_model_config():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+@app.route('/<league_id>/api/model-configs/<config_id>', methods=['PUT'])
 @app.route('/api/model-configs/<config_id>', methods=['PUT'])
-def update_model_config(config_id):
+def update_model_config(config_id, league_id=None):
     """Update a model configuration (name or selected status)."""
     try:
+        classifier_config_collection = g.league.collections.get('model_config_classifier', 'model_config_nba')
         data = request.json
-        
+
         if not data:
             return jsonify({
                 'success': False,
                 'error': 'No data provided'
             }), 400
-        
+
         update_fields = {}
-        
+
         # Update name if provided
         if 'name' in data:
             update_fields['name'] = data['name']
-        
+
         # Handle selected flag
         if 'selected' in data:
             if data['selected'] is True:
                 # Unset all other configs
-                db.model_config_nba.update_many(
+                db[classifier_config_collection].update_many(
                     {'selected': True},
                     {'$set': {'selected': False}}
                 )
                 update_fields['selected'] = True
             else:
                 update_fields['selected'] = False
-        
+
         if not update_fields:
             return jsonify({
                 'success': False,
                 'error': 'No valid fields to update'
             }), 400
-        
+
         update_fields['updated_at'] = datetime.utcnow()
-        
+
         # Update the config
-        result = db.model_config_nba.update_one(
+        result = db[classifier_config_collection].update_one(
             {'_id': ObjectId(config_id)},
             {'$set': update_fields}
         )
@@ -4893,40 +4576,43 @@ def update_model_config(config_id):
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+@app.route('/<league_id>/api/model-configs/<config_id>', methods=['DELETE'])
 @app.route('/api/model-configs/<config_id>', methods=['DELETE'])
-def delete_model_config(config_id):
+def delete_model_config(config_id, league_id=None):
     """Delete a model configuration from the database."""
     try:
+        classifier_config_collection = g.league.collections.get('model_config_classifier', 'model_config_nba')
+
         # Check if config exists and if it's selected
-        config = db.model_config_nba.find_one({'_id': ObjectId(config_id)})
-        
+        config = db[classifier_config_collection].find_one({'_id': ObjectId(config_id)})
+
         if not config:
             return jsonify({
                 'success': False,
                 'error': 'Config not found'
             }), 404
-        
+
         # If this config is selected, we should probably not allow deletion
         # or automatically select another one. For now, we'll just warn but allow deletion.
         was_selected = config.get('selected', False)
-        
+
         # Delete the config
-        result = db.model_config_nba.delete_one({'_id': ObjectId(config_id)})
-        
+        result = db[classifier_config_collection].delete_one({'_id': ObjectId(config_id)})
+
         if result.deleted_count == 0:
             return jsonify({
                 'success': False,
                 'error': 'Failed to delete config'
             }), 500
-        
+
         # If it was selected, optionally select the most recent config
         if was_selected:
-            latest_config = db.model_config_nba.find_one(
+            latest_config = db[classifier_config_collection].find_one(
                 {},
                 sort=[('trained_at', -1), ('updated_at', -1)]
             )
             if latest_config:
-                db.model_config_nba.update_one(
+                db[classifier_config_collection].update_one(
                     {'_id': latest_config['_id']},
                     {'$set': {'selected': True, 'updated_at': datetime.utcnow()}}
                 )
@@ -4941,8 +4627,246 @@ def delete_model_config(config_id):
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+@app.route('/<league_id>/api/ensembles', methods=['GET'])
+@app.route('/api/ensembles', methods=['GET'])
+def get_ensembles(league_id=None):
+    """Get all ensemble configurations."""
+    try:
+        # Get league-aware collection
+        config_collection = g.league.collections.get('model_config_classifier', 'model_config_nba')
+
+        # Find all configs that have ensemble_models field (these are ensembles)
+        ensembles = list(db[config_collection].find({'ensemble_models': {'$exists': True}}))
+
+        # Convert ObjectId to string for JSON serialization
+        for ensemble in ensembles:
+            ensemble['_id'] = str(ensemble['_id'])
+            # Also convert any nested ObjectIds in ensemble_models
+            if 'ensemble_models' in ensemble:
+                ensemble['ensemble_models'] = [str(m) if not isinstance(m, str) else m for m in ensemble['ensemble_models']]
+
+        return jsonify({
+            'success': True,
+            'ensembles': ensembles
+        })
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/<league_id>/api/ensembles/available-base-models', methods=['GET'])
+@app.route('/api/ensembles/available-base-models', methods=['GET'])
+def get_available_base_models(league_id=None):
+    """Get all trained non-ensemble models available for use in ensembles."""
+    try:
+        # Get league-aware collection
+        config_collection = g.league.collections.get('model_config_classifier', 'model_config_nba')
+
+        # Find trained non-ensemble models (must have trained_at and no ensemble_models field)
+        base_models = list(db[config_collection].find({
+            'trained_at': {'$exists': True},
+            'ensemble_models': {'$exists': False}
+        }))
+
+        # Convert ObjectId to string
+        for model in base_models:
+            model['_id'] = str(model['_id'])
+
+        return jsonify({
+            'success': True,
+            'models': base_models
+        })
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/<league_id>/api/ensembles/<ensemble_id>', methods=['GET'])
+@app.route('/api/ensembles/<ensemble_id>', methods=['GET'])
+def get_ensemble(ensemble_id, league_id=None):
+    """Get a specific ensemble configuration."""
+    try:
+        from bson import ObjectId
+        config_collection = g.league.collections.get('model_config_classifier', 'model_config_nba')
+
+        ensemble = db[config_collection].find_one({'_id': ObjectId(ensemble_id)})
+        if not ensemble:
+            return jsonify({'success': False, 'error': 'Ensemble not found'}), 404
+
+        ensemble['_id'] = str(ensemble['_id'])
+        if 'ensemble_models' in ensemble:
+            ensemble['ensemble_models'] = [str(m) if not isinstance(m, str) else m for m in ensemble['ensemble_models']]
+
+        return jsonify({
+            'success': True,
+            'ensemble': ensemble
+        })
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/<league_id>/api/ensembles/<ensemble_id>', methods=['PUT'])
+@app.route('/api/ensembles/<ensemble_id>', methods=['PUT'])
+def update_ensemble(ensemble_id, league_id=None):
+    """Update an ensemble configuration."""
+    try:
+        from bson import ObjectId
+        from datetime import datetime
+        config_collection = g.league.collections.get('model_config_classifier', 'model_config_nba')
+
+        data = request.json
+        if not data:
+            return jsonify({'success': False, 'error': 'No data provided'}), 400
+
+        # Find existing ensemble
+        existing = db[config_collection].find_one({'_id': ObjectId(ensemble_id)})
+        if not existing:
+            return jsonify({'success': False, 'error': 'Ensemble not found'}), 404
+
+        # Build update document
+        update_fields = {}
+        allowed_fields = ['name', 'ensemble_models', 'ensemble_type', 'ensemble_meta_features',
+                          'ensemble_use_disagree', 'ensemble_use_conf', 'selected']
+
+        for field in allowed_fields:
+            if field in data:
+                update_fields[field] = data[field]
+
+        if update_fields:
+            update_fields['updated_at'] = datetime.utcnow()
+            db[config_collection].update_one(
+                {'_id': ObjectId(ensemble_id)},
+                {'$set': update_fields}
+            )
+
+        return jsonify({
+            'success': True,
+            'message': 'Ensemble updated successfully'
+        })
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/<league_id>/api/ensembles/validate', methods=['POST'])
+@app.route('/api/ensembles/validate', methods=['POST'])
+def validate_ensemble(league_id=None):
+    """Validate ensemble configuration before saving."""
+    try:
+        from bson import ObjectId
+        config_collection = g.league.collections.get('model_config_classifier', 'model_config_nba')
+
+        data = request.json
+        if not data:
+            return jsonify({'success': False, 'error': 'No data provided'}), 400
+
+        ensemble_models = data.get('ensemble_models', [])
+        if len(ensemble_models) < 2:
+            return jsonify({
+                'success': False,
+                'error': 'At least 2 models are required for ensemble'
+            }), 400
+
+        # Validate all models exist and have compatible time configs
+        base_models = []
+        for model_id in ensemble_models:
+            model = db[config_collection].find_one({'_id': ObjectId(model_id)})
+            if not model:
+                return jsonify({
+                    'success': False,
+                    'error': f'Model {model_id} not found'
+                }), 404
+            if model.get('ensemble_models'):
+                return jsonify({
+                    'success': False,
+                    'error': 'Cannot include ensemble model in another ensemble'
+                }), 400
+            base_models.append(model)
+
+        # Validate time configs match
+        if base_models:
+            ref = base_models[0]
+            for model in base_models[1:]:
+                for key in ['begin_year', 'calibration_years', 'evaluation_year']:
+                    if model.get(key) != ref.get(key):
+                        return jsonify({
+                            'success': False,
+                            'error': f'Time config mismatch: {key} differs between models'
+                        }), 400
+
+        return jsonify({'success': True, 'message': 'Validation passed'})
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/<league_id>/api/ensembles/<ensemble_id>/retrain-meta', methods=['POST'])
+@app.route('/api/ensembles/<ensemble_id>/retrain-meta', methods=['POST'])
+def retrain_ensemble_meta(ensemble_id, league_id=None):
+    """Retrain the meta-model for an ensemble."""
+    try:
+        from bson import ObjectId
+        config_collection = g.league.collections.get('model_config_classifier', 'model_config_nba')
+
+        ensemble = db[config_collection].find_one({'_id': ObjectId(ensemble_id)})
+        if not ensemble:
+            return jsonify({'success': False, 'error': 'Ensemble not found'}), 404
+
+        if not ensemble.get('ensemble_models'):
+            return jsonify({'success': False, 'error': 'Not an ensemble configuration'}), 400
+
+        # TODO: Implement actual meta-model retraining
+        # For now, return a placeholder response
+        return jsonify({
+            'success': True,
+            'message': 'Meta-model retraining started',
+            'ensemble_id': ensemble_id
+        })
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/<league_id>/api/ensembles/<ensemble_id>/retrain-base/<base_model_id>', methods=['POST'])
+@app.route('/api/ensembles/<ensemble_id>/retrain-base/<base_model_id>', methods=['POST'])
+def retrain_ensemble_base(ensemble_id, base_model_id, league_id=None):
+    """Retrain a base model within an ensemble."""
+    try:
+        from bson import ObjectId
+        config_collection = g.league.collections.get('model_config_classifier', 'model_config_nba')
+
+        ensemble = db[config_collection].find_one({'_id': ObjectId(ensemble_id)})
+        if not ensemble:
+            return jsonify({'success': False, 'error': 'Ensemble not found'}), 404
+
+        ensemble_models = ensemble.get('ensemble_models', [])
+        if base_model_id not in [str(m) for m in ensemble_models]:
+            return jsonify({'success': False, 'error': 'Base model not part of this ensemble'}), 400
+
+        # TODO: Implement actual base model retraining
+        # For now, return a placeholder response
+        return jsonify({
+            'success': True,
+            'message': 'Base model retraining started',
+            'ensemble_id': ensemble_id,
+            'base_model_id': base_model_id
+        })
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/<league_id>/api/model-configs/create-ensemble', methods=['POST'])
 @app.route('/api/model-configs/create-ensemble', methods=['POST'])
-def create_ensemble():
+def create_ensemble(league_id=None):
     """Create an ensemble model configuration."""
     try:
         from bson import ObjectId
@@ -5131,8 +5055,9 @@ def create_ensemble():
 # JOB MANAGEMENT FUNCTIONS
 # =========================================================================
 
+@app.route('/<league_id>/api/model-configs/<config_id>/download', methods=['GET'])
 @app.route('/api/model-configs/<config_id>/download', methods=['GET'])
-def download_model_config_training_csv(config_id):
+def download_model_config_training_csv(config_id, league_id=None):
     """Download the training CSV associated with a model config."""
     try:
         try:
@@ -5255,18 +5180,25 @@ def fail_job(job_id: str, error: str, message: str = None):
     )
 
 
+@app.route('/<league_id>/api/jobs/<job_id>', methods=['GET'])
 @app.route('/api/jobs/<job_id>', methods=['GET'])
-def get_job_status(job_id):
+def get_job_status(job_id, league_id=None):
     """Get job status by ID."""
     try:
-        job = db.jobs_nba.find_one({'_id': ObjectId(job_id)})
-        
+        # Get league-aware jobs collection
+        jobs_collection = g.league.collections.get('jobs', 'jobs_nba')
+        job = db[jobs_collection].find_one({'_id': ObjectId(job_id)})
+
         if not job:
+            logger.warning(f"[JOBS API] Job {job_id} not found in collection {jobs_collection}")
             return jsonify({
                 'success': False,
                 'error': 'Job not found'
             }), 404
-        
+
+        # Log current job status for debugging
+        logger.info(f"[JOBS API] get_job_status({job_id}) from {jobs_collection}: status={job.get('status')}, progress={job.get('progress')}%")
+
         # Convert ObjectId to string
         job['_id'] = str(job['_id'])
         # Convert datetime to ISO string
@@ -5274,7 +5206,7 @@ def get_job_status(job_id):
             job['created_at'] = job['created_at'].isoformat()
         if 'updated_at' in job and job['updated_at']:
             job['updated_at'] = job['updated_at'].isoformat()
-        
+
         return jsonify({
             'success': True,
             'job': job
@@ -5285,11 +5217,14 @@ def get_job_status(job_id):
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+@app.route('/<league_id>/api/jobs/running/<job_type>', methods=['GET'])
 @app.route('/api/jobs/running/<job_type>', methods=['GET'])
-def get_running_jobs_by_type(job_type):
+def get_running_jobs_by_type(job_type, league_id=None):
     """Get the most recent running job of a specific type."""
     try:
-        job = db.jobs_nba.find_one(
+        # Get league-aware jobs collection
+        jobs_collection = g.league.collections.get('jobs', 'jobs_nba')
+        job = db[jobs_collection].find_one(
             {'type': job_type, 'status': 'running'},
             sort=[('created_at', -1)]
         )
@@ -5318,8 +5253,9 @@ def get_running_jobs_by_type(job_type):
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+@app.route('/<league_id>/api/master-training/resolve-dependencies', methods=['POST'])
 @app.route('/api/master-training/resolve-dependencies', methods=['POST'])
-def resolve_feature_dependencies():
+def resolve_feature_dependencies(league_id=None):
     """Resolve feature dependencies for regeneration."""
     try:
         data = request.json
@@ -5328,22 +5264,22 @@ def resolve_feature_dependencies():
         
         # Empty array means regenerate all features
         # Non-empty array means regenerate features matching substrings
-        
+
         # Load master CSV to get all features
-        from nba_app.cli.master_training_data import MASTER_TRAINING_PATH
         import pandas as pd
-        
-        if not os.path.exists(MASTER_TRAINING_PATH):
+        master_training_path = get_master_training_path()
+
+        if not os.path.exists(master_training_path):
             return jsonify({'success': False, 'error': 'Master training CSV not found'}), 404
-        
-        df = pd.read_csv(MASTER_TRAINING_PATH)
+
+        df = pd.read_csv(master_training_path)
         metadata_cols = ['Year', 'Month', 'Day', 'Home', 'Away', 'game_id', 'HomeWon', 
                         'home_points', 'away_points', 'pred_home_points', 'pred_away_points', 
                         'pred_margin', 'pred_point_total', 'pred_total']
         all_features = [c for c in df.columns if c not in metadata_cols]
         
         # Find matching features by substring
-        from nba_app.cli.populate_master_training_cols import find_features_by_substrings
+        from nba_app.cli_old.populate_master_training_cols import find_features_by_substrings
         
         if not feature_substrings or len(feature_substrings) == 0:
             # Empty filter = regenerate all features
@@ -5359,7 +5295,7 @@ def resolve_feature_dependencies():
                 }), 404
         
         # Resolve dependencies
-        from nba_app.cli.feature_dependencies import resolve_dependencies, categorize_features
+        from nba_app.core.features.dependencies import resolve_dependencies, categorize_features
         
         all_to_regenerate, dependency_map = resolve_dependencies(
             requested_features,
@@ -5389,8 +5325,9 @@ def resolve_feature_dependencies():
         }), 500
 
 
+@app.route('/<league_id>/api/master-training/regenerate-features', methods=['POST'])
 @app.route('/api/master-training/regenerate-features', methods=['POST'])
-def regenerate_master_features():
+def regenerate_master_features(league_id=None):
     """Regenerate specific features in master training CSV."""
     try:
         data = request.json
@@ -5405,22 +5342,22 @@ def regenerate_master_features():
                 'success': False,
                 'error': 'User confirmation required. Call resolve-dependencies first.'
             }), 400
-        
+
         # Validate CSV exists
-        from nba_app.cli.master_training_data import MASTER_TRAINING_PATH
-        if not os.path.exists(MASTER_TRAINING_PATH):
+        master_training_path = get_master_training_path()
+        if not os.path.exists(master_training_path):
             return jsonify({'success': False, 'error': 'Master training CSV not found'}), 404
-        
+
         # Load CSV to get feature info for job metadata
         import pandas as pd
-        df = pd.read_csv(MASTER_TRAINING_PATH)
+        df = pd.read_csv(master_training_path)
         metadata_cols = ['Year', 'Month', 'Day', 'Home', 'Away', 'game_id', 'HomeWon', 
                         'home_points', 'away_points', 'pred_home_points', 'pred_away_points', 
                         'pred_margin', 'pred_point_total', 'pred_total']
         all_csv_features = [c for c in df.columns if c not in metadata_cols]
         
         # Find matching features
-        from nba_app.cli.populate_master_training_cols import find_features_by_substrings
+        from nba_app.cli_old.populate_master_training_cols import find_features_by_substrings
         
         if not feature_substrings or len(feature_substrings) == 0:
             # Empty filter = regenerate all features
@@ -5436,7 +5373,7 @@ def regenerate_master_features():
                 }), 404
         
         # Resolve dependencies for metadata
-        from nba_app.cli.feature_dependencies import resolve_dependencies, categorize_features
+        from nba_app.core.features.dependencies import resolve_dependencies, categorize_features
         all_to_regenerate, dependency_map = resolve_dependencies(
             requested_features,
             include_transitive=True
@@ -5502,11 +5439,12 @@ def regenerate_master_features():
         }), 500
 
 
+@app.route('/<league_id>/api/master-training/possible-features', methods=['GET'])
 @app.route('/api/master-training/possible-features', methods=['GET'])
-def get_possible_features():
+def get_possible_features(league_id=None):
     """Get list of all possible features that can be generated."""
     try:
-        from nba_app.cli.master_training_data import get_all_possible_features
+        from nba_app.cli_old.master_training_data import get_all_possible_features
         features = get_all_possible_features(no_player=False)
         return jsonify({
             'success': True,
@@ -5521,8 +5459,9 @@ def get_possible_features():
         }), 500
 
 
+@app.route('/<league_id>/api/master-training/delete-column', methods=['POST'])
 @app.route('/api/master-training/delete-column', methods=['POST'])
-def delete_master_column():
+def delete_master_column(league_id=None):
     """Delete a column from the master training CSV."""
     try:
         data = request.json
@@ -5530,12 +5469,12 @@ def delete_master_column():
         
         if not column_name:
             return jsonify({'success': False, 'error': 'column_name required'}), 400
-        
+
         # Validate CSV exists
-        from nba_app.cli.master_training_data import MASTER_TRAINING_PATH
-        if not os.path.exists(MASTER_TRAINING_PATH):
+        master_training_path = get_master_training_path()
+        if not os.path.exists(master_training_path):
             return jsonify({'success': False, 'error': 'Master training CSV not found'}), 404
-        
+
         # Metadata columns that cannot be deleted
         metadata_cols = ['Year', 'Month', 'Day', 'Home', 'Away', 'HomeWon']
         if column_name in metadata_cols:
@@ -5543,10 +5482,10 @@ def delete_master_column():
                 'success': False,
                 'error': f'Cannot delete metadata column: {column_name}'
             }), 400
-        
+
         # Read CSV
         import pandas as pd
-        df = pd.read_csv(MASTER_TRAINING_PATH)
+        df = pd.read_csv(master_training_path)
         
         # Check if column exists
         if column_name not in df.columns:
@@ -5561,9 +5500,9 @@ def delete_master_column():
         # Write back to CSV (atomic operation: write to temp, then swap)
         import shutil
         from datetime import datetime
-        temp_file_path = f"{MASTER_TRAINING_PATH}.tmp_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        temp_file_path = f"{master_training_path}.tmp_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         df.to_csv(temp_file_path, index=False)
-        shutil.move(temp_file_path, MASTER_TRAINING_PATH)
+        shutil.move(temp_file_path, master_training_path)
         
         return jsonify({
             'success': True,
@@ -5578,8 +5517,9 @@ def delete_master_column():
         }), 500
 
 
+@app.route('/<league_id>/api/master-training/add-columns', methods=['POST'])
 @app.route('/api/master-training/add-columns', methods=['POST'])
-def add_master_columns():
+def add_master_columns(league_id=None):
     """Add columns to the master training CSV."""
     try:
         data = request.json
@@ -5594,14 +5534,14 @@ def add_master_columns():
                 'success': False,
                 'error': 'User confirmation required'
             }), 400
-        
+
         # Validate CSV exists
-        from nba_app.cli.master_training_data import MASTER_TRAINING_PATH
-        if not os.path.exists(MASTER_TRAINING_PATH):
+        master_training_path = get_master_training_path()
+        if not os.path.exists(master_training_path):
             return jsonify({'success': False, 'error': 'Master training CSV not found'}), 404
         
         # Validate feature names format
-        from nba_app.cli.feature_name_parser import validate_feature_name
+        from nba_app.core.features.parser import validate_feature_name
         invalid_features = [f for f in feature_names if not validate_feature_name(f)]
         if invalid_features:
             return jsonify({
@@ -5610,7 +5550,7 @@ def add_master_columns():
             }), 400
         
         # Get all possible features to validate
-        from nba_app.cli.master_training_data import get_all_possible_features
+        from nba_app.cli_old.master_training_data import get_all_possible_features
         all_possible = set(get_all_possible_features(no_player=False))
         unknown_features = [f for f in feature_names if f not in all_possible]
         if unknown_features:
@@ -5664,6 +5604,148 @@ def add_master_columns():
             'job_id': job_id,
             'message': 'Column addition started'
         })
+    except Exception as e:
+        import traceback
+        return jsonify({
+            'success': False,
+            'error': str(e),
+            'traceback': traceback.format_exc()
+        }), 500
+
+
+@app.route('/<league_id>/api/master-training/available-seasons', methods=['GET'])
+@app.route('/api/master-training/available-seasons', methods=['GET'])
+def master_training_available_seasons(league_id=None):
+    """Get available seasons from MongoDB with game counts and master training status."""
+    try:
+        from nba_app.core.services.training_data import TrainingDataService
+
+        service = TrainingDataService(league=g.league)
+        seasons = service.get_available_seasons()
+
+        return jsonify({
+            'success': True,
+            'seasons': seasons
+        })
+    except Exception as e:
+        import traceback
+        return jsonify({
+            'success': False,
+            'error': str(e),
+            'traceback': traceback.format_exc()
+        }), 500
+
+
+@app.route('/<league_id>/api/master-training/regenerate-seasons', methods=['POST'])
+@app.route('/api/master-training/regenerate-seasons', methods=['POST'])
+def master_training_regenerate_seasons(league_id=None):
+    """Regenerate specific seasons in master training CSV."""
+    try:
+        data = request.get_json()
+        seasons = data.get('seasons', [])
+        no_player = data.get('no_player', False)
+
+        if not seasons:
+            return jsonify({
+                'success': False,
+                'error': 'No seasons provided'
+            }), 400
+
+        # Capture league before spawning thread (g.league is request-bound)
+        league = g.league
+
+        # Create job for progress tracking
+        job_id = create_job('regenerate_seasons', league=league, metadata={
+            'seasons': seasons,
+            'no_player': no_player
+        })
+
+        # Spawn background thread for regeneration
+        def run_regeneration():
+            try:
+                from nba_app.core.services.training_data import TrainingDataService
+
+                def progress_callback(current, total, pct, message):
+                    update_job_progress(job_id, pct, message, league=league)
+
+                service = TrainingDataService(league=league)
+                games_count, path = service.regenerate_seasons(
+                    seasons=seasons,
+                    no_player=no_player,
+                    progress_callback=progress_callback
+                )
+
+                complete_job(job_id, f'Regenerated {games_count} games for {len(seasons)} season(s)', league=league)
+
+            except Exception as e:
+                import traceback
+                fail_job(job_id, str(e), traceback.format_exc(), league=league)
+
+        import threading
+        thread = threading.Thread(target=run_regeneration, daemon=True)
+        thread.start()
+
+        return jsonify({
+            'success': True,
+            'job_id': job_id,
+            'message': f'Regenerating {len(seasons)} season(s)'
+        })
+
+    except Exception as e:
+        import traceback
+        return jsonify({
+            'success': False,
+            'error': str(e),
+            'traceback': traceback.format_exc()
+        }), 500
+
+
+@app.route('/<league_id>/api/master-training/regenerate-full', methods=['POST'])
+@app.route('/api/master-training/regenerate-full', methods=['POST'])
+def master_training_regenerate_full(league_id=None):
+    """Regenerate the entire master training CSV from scratch."""
+    try:
+        data = request.get_json()
+        no_player = data.get('no_player', False)
+
+        # Capture league before spawning thread (g.league is request-bound)
+        league = g.league
+
+        # Create job for progress tracking
+        job_id = create_job('regenerate_full', league=league, metadata={
+            'no_player': no_player
+        })
+
+        # Spawn background thread for regeneration
+        def run_regeneration():
+            try:
+                from nba_app.core.services.training_data import TrainingDataService
+
+                def progress_callback(current, total, pct, message):
+                    update_job_progress(job_id, pct, message, league=league)
+
+                service = TrainingDataService(league=league)
+                games_count, path, features = service.regenerate_full(
+                    no_player=no_player,
+                    progress_callback=progress_callback
+                )
+
+                complete_job(job_id, f'Regenerated {games_count} games with {len(features)} features', league=league)
+
+            except Exception as e:
+                import traceback
+                fail_job(job_id, str(e), traceback.format_exc(), league=league)
+
+        import threading
+        thread = threading.Thread(target=run_regeneration, daemon=True)
+        thread.start()
+
+        return jsonify({
+            'success': True,
+            'job_id': job_id,
+            'message': 'Starting full regeneration'
+        })
+
     except Exception as e:
         import traceback
         return jsonify({
@@ -5752,21 +5834,21 @@ def run_training_job(
         include_era_normalization = inferred_flags.get('include_era_normalization', False)
 
         if use_master:
-            from nba_app.cli.master_training_data import (
+            from nba_app.cli_old.master_training_data import (
                 extract_features_from_master,
                 check_master_needs_regeneration,
                 generate_master_training_data,
-                MASTER_TRAINING_PATH,
             )
+            master_training_path = get_master_training_path()
 
             pred_features = [
                 f for f in (requested_features or [])
                 if isinstance(f, str) and f.startswith('pred_')
             ]
-            if pred_features and os.path.exists(MASTER_TRAINING_PATH):
+            if pred_features and os.path.exists(master_training_path):
                 try:
                     import pandas as pd
-                    master_header_cols = set(pd.read_csv(MASTER_TRAINING_PATH, nrows=0).columns)
+                    master_header_cols = set(pd.read_csv(master_training_path, nrows=0).columns)
                     missing_pred = [f for f in pred_features if f not in master_header_cols]
                     if missing_pred:
                         raise ValueError(
@@ -5777,7 +5859,7 @@ def run_training_job(
                 except Exception:
                     raise
 
-            if os.path.exists(MASTER_TRAINING_PATH):
+            if os.path.exists(master_training_path):
                 non_pred_features = [f for f in (requested_features or []) if f not in pred_features]
                 needs_regeneration, missing_features = check_master_needs_regeneration(db, non_pred_features)
                 if needs_regeneration and missing_features:
@@ -5793,7 +5875,7 @@ def run_training_job(
             os.makedirs(outputs_root, exist_ok=True)
 
             clf_csv = extract_features_from_master(
-                MASTER_TRAINING_PATH,
+                master_training_path,
                 requested_features if requested_features else None,
                 output_path=os.path.join(outputs_root, f'extracted_training_{timestamp}.csv')
             )
@@ -6271,8 +6353,9 @@ def run_training_job(
         fail_job(job_id, str(e), f'Training failed: {str(e)}')
 
 
+@app.route('/<league_id>/api/model-config/train', methods=['POST'])
 @app.route('/api/model-config/train', methods=['POST'])
-def train_model_config():
+def train_model_config(league_id=None):
     """
     Start training job asynchronously.
     Returns job_id immediately for polling.
@@ -6782,12 +6865,13 @@ def run_ensemble_training_job(
         traceback.print_exc()
 
 
+@app.route('/<league_id>/api/points-model/train', methods=['POST'])
 @app.route('/api/points-model/train', methods=['POST'])
-def train_points_model():
+def train_points_model(league_id=None):
     """Train a points regression model."""
     try:
-        from nba_app.cli.points_regression import PointsRegressionTrainer
-        from nba_app.cli.points_regression_features import get_points_features_by_sets
+        from nba_app.core.models import PointsRegressionTrainer
+        from nba_app.cli_old.points_regression_features import get_points_features_by_sets
         
         config = request.json
         model_type = config.get('model_type', 'Ridge')
@@ -6915,38 +6999,38 @@ def train_points_model():
             features = all_features
         
         # Use master training data if available (same master CSV as classifiers)
-        from nba_app.cli.master_training_data import (
+        from nba_app.cli_old.master_training_data import (
             extract_features_from_master_for_points,
             check_master_needs_regeneration,
             get_master_training_metadata,
             generate_master_training_data,
-            MASTER_TRAINING_PATH
         )
         import logging
         logger = logging.getLogger(__name__)
-        
+        master_training_path = get_master_training_path()
+
         training_csv = None
         use_master = True  # Always try to use master if available
-        
-        if use_master and os.path.exists(MASTER_TRAINING_PATH):
+
+        if use_master and os.path.exists(master_training_path):
             # Check if master needs regeneration
             needs_regeneration, missing_features = check_master_needs_regeneration(db, features if features else [])
-            
+
             if needs_regeneration and missing_features:
                 # Master missing features - regenerate it
                 logger.warning(f"Master training data missing features: {missing_features}. Regenerating master...")
                 master_path, master_features, master_game_count = generate_master_training_data()
                 logger.info(f"Master training data regenerated: {master_game_count} games, {len(master_features)} features")
-            
+
             # Extract requested features from master (for points regression, includes home_points/away_points)
             import tempfile
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
             temp_csv = os.path.join(tempfile.gettempdir(), f'extracted_points_training_{timestamp}.csv')
-            
+
             # Use default min_games_played=15 to match agent workflow
             min_games_played = 15
             training_csv = extract_features_from_master_for_points(
-                MASTER_TRAINING_PATH,
+                master_training_path,
                 features if features else None,
                 output_path=temp_csv,
                 begin_year=begin_year,
@@ -6958,16 +7042,16 @@ def train_points_model():
             logger.info("Master training data does not exist. Generating...")
             master_path, master_features, master_game_count = generate_master_training_data()
             logger.info(f"Generated master training data: {master_game_count} games, {len(master_features)} features")
-            
+
             # Extract features
             import tempfile
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
             temp_csv = os.path.join(tempfile.gettempdir(), f'extracted_points_training_{timestamp}.csv')
-            
+
             # Use default min_games_played=15 to match agent workflow (same as dataset_builder default)
             min_games_played = 15
             training_csv = extract_features_from_master_for_points(
-                MASTER_TRAINING_PATH,
+                master_training_path,
                 features if features else None,
                 output_path=temp_csv,
                 begin_year=begin_year,
@@ -7039,7 +7123,7 @@ def train_points_model():
         report_path = trainer.generate_diagnostics(training_results)
         
         # Save config to MongoDB
-        from nba_app.cli.points_regression_features import generate_feature_set_hash
+        from nba_app.cli_old.points_regression_features import generate_feature_set_hash
         import hashlib
         
         # Use all features if none selected
@@ -7192,11 +7276,12 @@ def train_points_model():
             'error': str(e)
         }), 500
 
+@app.route('/<league_id>/api/points-model/predict', methods=['POST'])
 @app.route('/api/points-model/predict', methods=['POST'])
-def predict_points():
+def predict_points(league_id=None):
     """Predict points for a game using the trained points regression model."""
     try:
-        from nba_app.cli.points_regression import PointsRegressionTrainer
+        from nba_app.core.models import PointsRegressionTrainer
         import glob
         
         data = request.json
@@ -7206,9 +7291,12 @@ def predict_points():
         
         if not game_id or not game_date_str:
             return jsonify({'error': 'game_id and game_date are required'}), 400
-        
+
+        # Get league-aware games collection
+        games_collection = g.league.collections.get('games', 'stats_nba')
+
         # Get game from database
-        game = db.stats_nba.find_one({'game_id': game_id})
+        game = db[games_collection].find_one({'game_id': game_id})
         if not game:
             return jsonify({'error': 'Game not found'}), 404
         
@@ -7251,8 +7339,9 @@ def predict_points():
             'error': str(e)
         }), 500
 
+@app.route('/<league_id>/api/model-config/predict', methods=['POST'])
 @app.route('/api/model-config/predict', methods=['POST'])
-def predict_model_config():
+def predict_model_config(league_id=None):
     """Make predictions with configuration."""
     try:
         config = request.json
@@ -7313,8 +7402,9 @@ def chat(session_id=None):
     return render_template('chat.html', session_id=session_id)
 
 
+@app.route('/<league_id>/api/chat', methods=['POST'])
 @app.route('/api/chat', methods=['POST'])
-def chat_api():
+def chat_api(league_id=None):
     """Chat API endpoint"""
     try:
         data = request.json
@@ -7492,8 +7582,9 @@ def chat_api():
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/<league_id>/api/chat/set-baseline', methods=['POST'])
 @app.route('/api/chat/set-baseline', methods=['POST'])
-def set_baseline():
+def set_baseline(league_id=None):
     """Set a run as baseline"""
     try:
         data = request.json
@@ -7519,8 +7610,9 @@ def set_baseline():
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/<league_id>/api/chat/sessions', methods=['GET'])
 @app.route('/api/chat/sessions', methods=['GET'])
-def get_nba_modeler_sessions():
+def get_nba_modeler_sessions(league_id=None):
     """Get list of all chat sessions"""
     try:
         sessions = list(db.nba_modeler_sessions.find(
@@ -7545,8 +7637,9 @@ def get_nba_modeler_sessions():
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/<league_id>/api/chat/sessions/<session_id>', methods=['GET'])
 @app.route('/api/chat/sessions/<session_id>', methods=['GET'])
-def get_chat_session(session_id):
+def get_chat_session(session_id, league_id=None):
     """Get a specific chat session with all messages"""
     try:
         try:
@@ -7575,8 +7668,9 @@ def get_chat_session(session_id):
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/<league_id>/api/chat/sessions/<session_id>/system-info', methods=['GET'])
 @app.route('/api/chat/sessions/<session_id>/system-info', methods=['GET'])
-def get_session_system_info(session_id):
+def get_session_system_info(session_id, league_id=None):
     """Get system_info for a chat session"""
     try:
         try:
@@ -7596,8 +7690,9 @@ def get_session_system_info(session_id):
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/<league_id>/api/chat/sessions/<session_id>/system-info', methods=['PUT'])
 @app.route('/api/chat/sessions/<session_id>/system-info', methods=['PUT'])
-def update_session_system_info(session_id):
+def update_session_system_info(session_id, league_id=None):
     """Update system_info for a chat session"""
     try:
         data = request.json
@@ -7637,8 +7732,9 @@ def update_session_system_info(session_id):
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/<league_id>/api/chat/sessions/<session_id>/invalidate-agent', methods=['POST'])
 @app.route('/api/chat/sessions/<session_id>/invalidate-agent', methods=['POST'])
-def invalidate_agent_session(session_id):
+def invalidate_agent_session(session_id, league_id=None):
     """Invalidate agent session to force reload with new system_info"""
     try:
         with _session_lock:
@@ -7649,8 +7745,9 @@ def invalidate_agent_session(session_id):
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/<league_id>/api/chat/sessions/<session_id>/name', methods=['PUT'])
 @app.route('/api/chat/sessions/<session_id>/name', methods=['PUT'])
-def update_session_name(session_id):
+def update_session_name(session_id, league_id=None):
     """Update session name"""
     try:
         data = request.json
@@ -7684,8 +7781,9 @@ def update_session_name(session_id):
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/<league_id>/api/chat/sessions', methods=['POST'])
 @app.route('/api/chat/sessions', methods=['POST'])
-def create_chat_session():
+def create_chat_session(league_id=None):
     """Create a new chat session"""
     try:
         data = request.json
@@ -7712,8 +7810,9 @@ def create_chat_session():
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/<league_id>/api/chat/sessions/<session_id>', methods=['DELETE'])
 @app.route('/api/chat/sessions/<session_id>', methods=['DELETE'])
-def delete_chat_session(session_id):
+def delete_chat_session(session_id, league_id=None):
     """Delete a chat session"""
     try:
         try:
@@ -7739,8 +7838,9 @@ def delete_chat_session(session_id):
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/<league_id>/api/chat/sessions/<session_id>/messages', methods=['DELETE'])
 @app.route('/api/chat/sessions/<session_id>/messages', methods=['DELETE'])
-def delete_chat_message(session_id):
+def delete_chat_message(session_id, league_id=None):
     """Delete a message from a chat session"""
     try:
         try:
@@ -7802,8 +7902,9 @@ def delete_chat_message(session_id):
 # MATCHUP CHAT API ENDPOINTS
 # =============================================================================
 
+@app.route('/<league_id>/api/matchup-chat/sessions', methods=['POST'])
 @app.route('/api/matchup-chat/sessions', methods=['POST'])
-def create_matchup_chat_session():
+def create_matchup_chat_session(league_id=None):
     """Create or get existing matchup chat session for a game"""
     try:
         data = request.json
@@ -7814,18 +7915,22 @@ def create_matchup_chat_session():
         
         if not game_id:
             return jsonify({'error': 'game_id is required'}), 400
-        
+
+        # Get league-aware collection names
+        games_collection = g.league.collections.get('games', 'stats_nba')
+        sessions_collection = g.league.collections.get('matchup_sessions', 'nba_matchup_sessions')
+
         # Check if a session already exists for this game_id
-        existing_session = db.nba_matchup_sessions.find_one(
+        existing_session = db[sessions_collection].find_one(
             {'game_id': game_id},
             sort=[('updated_at', -1)]  # Get the most recently updated session
         )
-        
+
         if existing_session:
             # Return existing session
             session_id = str(existing_session['_id'])
             session_name = existing_session.get('name', f"Matchup Chat - {game_id}")
-            
+
             return jsonify({
                 'success': True,
                 'session_id': session_id,
@@ -7833,10 +7938,10 @@ def create_matchup_chat_session():
                 'game_id': game_id,
                 'existing': True
             })
-        
+
         # No existing session found, create a new one
         # Get game info
-        game = db.stats_nba.find_one({'game_id': game_id})
+        game = db[games_collection].find_one({'game_id': game_id})
         if not game:
             return jsonify({'error': f'Game {game_id} not found'}), 404
         
@@ -7906,8 +8011,9 @@ def create_matchup_chat_session():
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/<league_id>/api/matchup-chat', methods=['POST'])
 @app.route('/api/matchup-chat', methods=['POST'])
-def matchup_chat_api():
+def matchup_chat_api(league_id=None):
     """Matchup chat API endpoint"""
     try:
         data = request.json
@@ -7931,21 +8037,25 @@ def matchup_chat_api():
         except:
             logger.error(f"[MATCHUP_CHAT_API] Invalid session_id format: {session_id}")
             return jsonify({'error': 'Invalid session_id'}), 400
-        
-        session = db.nba_matchup_sessions.find_one({'_id': session_obj_id})
+
+        # Get league-aware sessions collection
+        league_config = getattr(g, 'league', None)
+        sessions_collection = league_config.collections.get('matchup_sessions', 'nba_matchup_sessions') if league_config else 'nba_matchup_sessions'
+
+        session = db[sessions_collection].find_one({'_id': session_obj_id})
         if not session:
             logger.error(f"[MATCHUP_CHAT_API] Session not found: {session_id}")
             return jsonify({'error': 'Session not found'}), 404
-        
+
         game_id = session.get('game_id')
         if not game_id:
             logger.error(f"[MATCHUP_CHAT_API] Session {session_id} missing game_id")
             return jsonify({'error': 'Session missing game_id'}), 400
-        
+
         logger.info(f"[MATCHUP_CHAT_API] Processing for game_id: {game_id}")
-        
+
         # Save user message to MongoDB
-        db.nba_matchup_sessions.update_one(
+        db[sessions_collection].update_one(
             {'_id': session_obj_id},
             {
                 '$push': {
@@ -7958,99 +8068,61 @@ def matchup_chat_api():
                 '$set': {'updated_at': datetime.utcnow()}
             }
         )
-        
-        # Get or create agent for session
-        # Check if system message file has been updated (to reload agents with new instructions)
-        global _matchup_system_message_mtime
-        system_message_path = os.path.join(
-            os.path.dirname(__file__), '..', 'agents', 'matchup_assistant', 'system_message.txt'
-        )
-        current_mtime = os.path.getmtime(system_message_path) if os.path.exists(system_message_path) else None
-        
-        with _session_lock:
-            # If system message changed, clear all cached agents to force reload
-            if _matchup_system_message_mtime is not None and current_mtime is not None:
-                if current_mtime > _matchup_system_message_mtime:
-                    print(f"System message updated. Clearing {len(_matchup_agent_sessions)} cached matchup agent(s)...")
-                    _matchup_agent_sessions.clear()
-            _matchup_system_message_mtime = current_mtime
-            
-            if session_id not in _matchup_agent_sessions:
-                try:
-                    logger.info(f"[MATCHUP_CHAT_API] Creating new agent for session {session_id}")
-                    from nba_app.agents.matchup_assistant.matchup_assistant_agent import MatchupAssistantAgent
-                    _matchup_agent_sessions[session_id] = MatchupAssistantAgent(
-                        session_id=session_id,
-                        game_id=game_id,
-                        db=db
-                    )
-                    logger.info(f"[MATCHUP_CHAT_API] Agent created successfully for session {session_id}")
-                except Exception as e:
-                    logger.error(f"[MATCHUP_CHAT_API] Failed to initialize agent: {str(e)}", exc_info=True)
-                    return jsonify({
-                        'error': f'Failed to initialize agent: {str(e)}. Make sure OPENAI_API_KEY is set (env var) and langchain is installed.'
-                    }), 500
-            else:
-                logger.debug(f"[MATCHUP_CHAT_API] Using existing agent for session {session_id}")
-            
-            agent = _matchup_agent_sessions[session_id]
-        
-        # Load conversation history from MongoDB
-        session_doc = db.nba_matchup_sessions.find_one({'_id': session_obj_id})
+
+        # Get league config (already retrieved earlier)
+        league_id = league_config.league_id if league_config else 'nba'
+
+        # Get show_agent_actions from request
+        show_agent_actions = data.get('show_agent_actions', False)
+
+        # Load conversation history from MongoDB (as simple dicts - Controller handles format)
+        session_doc = db[sessions_collection].find_one({'_id': session_obj_id})
         conversation_history = []
         if session_doc and 'messages' in session_doc:
-            # Filter out tool outputs and convert to LangChain message format
-            filtered_messages = []
+            # Filter out tool outputs
             for msg in session_doc['messages']:
                 if msg.get('role') == 'tool':
                     continue
                 if msg['role'] in ['user', 'assistant']:
-                    filtered_messages.append(msg)
-            
-            logger.debug(f"[MATCHUP_CHAT_API] Loaded {len(filtered_messages)} messages from history")
-            
+                    conversation_history.append({
+                        'role': msg['role'],
+                        'content': msg['content']
+                    })
+
+            logger.debug(f"[MATCHUP_CHAT_API] Loaded {len(conversation_history)} messages from history")
+
             # Apply memory window if specified
             if memory is not None:
                 try:
                     memory_int = int(memory)
                     if memory_int > 0:
-                        filtered_messages = filtered_messages[-memory_int:] if len(filtered_messages) > memory_int else filtered_messages
+                        conversation_history = conversation_history[-memory_int:] if len(conversation_history) > memory_int else conversation_history
                         logger.debug(f"[MATCHUP_CHAT_API] Applied memory window: {memory_int} messages")
                 except (ValueError, TypeError):
                     pass  # Invalid memory value, use all messages
-            
-            # Convert to LangChain message format
-            MAX_ASSISTANT_MESSAGE_LENGTH = 8000
-            for msg in filtered_messages:
-                if msg['role'] == 'user':
-                    from langchain_core.messages import HumanMessage
-                    conversation_history.append(HumanMessage(content=msg['content']))
-                elif msg['role'] == 'assistant':
-                    from langchain_core.messages import AIMessage
-                    content = msg['content']
-                    content_str = str(content)
-                    if len(content_str) > MAX_ASSISTANT_MESSAGE_LENGTH:
-                        truncate_msg = f"\n\n[Message truncated from {len(content_str):,} to {MAX_ASSISTANT_MESSAGE_LENGTH:,} characters]"
-                        keep_start = (MAX_ASSISTANT_MESSAGE_LENGTH - len(truncate_msg)) // 2
-                        keep_end = (MAX_ASSISTANT_MESSAGE_LENGTH - len(truncate_msg)) // 2
-                        content = content_str[:keep_start] + truncate_msg + content_str[-keep_end:]
-                        logger.debug(f"[MATCHUP_CHAT_API] Truncated assistant message from {len(content_str)} to {MAX_ASSISTANT_MESSAGE_LENGTH} chars")
-                    conversation_history.append(AIMessage(content=content))
-        
-        logger.info(f"[MATCHUP_CHAT_API] Calling agent.chat() with {len(conversation_history)} history messages")
-        
-        # Process message with conversation history
+
+        logger.info(f"[MATCHUP_CHAT_API] Using multi-agent Controller with {len(conversation_history)} history messages")
+
+        # Create Controller and process message
         try:
-            result = agent.chat(message, conversation_history=conversation_history)
-            response_text = result['response']
-            tool_calls = result.get('tool_calls', [])
-            
-            logger.info(f"[MATCHUP_CHAT_API] Agent returned response ({len(response_text)} chars) with {len(tool_calls)} tool call(s)")
-            if tool_calls:
-                logger.info(f"[MATCHUP_CHAT_API] Tool calls: {[tc.get('name') for tc in tool_calls]}")
-            
+            controller = MatchupChatController(db=db, league=league_config, league_id=league_id)
+            options = ControllerOptions(show_agent_actions=show_agent_actions)
+
+            result = controller.handle_user_message(
+                game_id=game_id,
+                user_message=message,
+                conversation_history=conversation_history,
+                options=options,
+            )
+
+            response_text = result.get('response', '')
+            agent_actions = result.get('agent_actions', [])
+            turn_plan = result.get('turn_plan', {})
+
+            logger.info(f"[MATCHUP_CHAT_API] Controller returned response ({len(response_text)} chars) with {len(agent_actions)} agent action(s)")
+
             # Save assistant response to MongoDB
-            db.nba_matchup_sessions.update_one(
+            db[sessions_collection].update_one(
                 {'_id': session_obj_id},
                 {
                     '$push': {
@@ -8058,24 +8130,26 @@ def matchup_chat_api():
                             'role': 'assistant',
                             'content': response_text,
                             'timestamp': datetime.utcnow(),
-                            'tool_calls': result.get('tool_calls', [])
+                            'agent_actions': agent_actions,
+                            'turn_plan': turn_plan
                         }
                     },
                     '$set': {'updated_at': datetime.utcnow()}
                 }
             )
-            
+
             return jsonify({
                 'success': True,
                 'response': response_text,
-                'tool_calls': tool_calls,
+                'agent_actions': agent_actions,
+                'turn_plan': turn_plan,
                 'session_id': session_id
             })
         except Exception as e:
             import traceback
             error_trace = traceback.format_exc()
-            logger.error(f"[MATCHUP_CHAT_API] Agent error: {str(e)}", exc_info=True)
-            print(f"[MATCHUP CHAT API ERROR] Agent error: {str(e)}")
+            logger.error(f"[MATCHUP_CHAT_API] Controller error: {str(e)}", exc_info=True)
+            print(f"[MATCHUP CHAT API ERROR] Controller error: {str(e)}")
             print(f"[MATCHUP CHAT API ERROR] Traceback:\n{error_trace}")
             return jsonify({
                 'error': f'Agent error: {str(e)}',
@@ -8089,8 +8163,9 @@ def matchup_chat_api():
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/<league_id>/api/matchup-chat/sessions', methods=['GET'])
 @app.route('/api/matchup-chat/sessions', methods=['GET'])
-def get_matchup_chat_sessions():
+def get_matchup_chat_sessions(league_id=None):
     """Get list of all matchup chat sessions"""
     try:
         game_id = request.args.get('game_id')  # Optional filter
@@ -8121,8 +8196,9 @@ def get_matchup_chat_sessions():
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/<league_id>/api/matchup-chat/sessions/<session_id>', methods=['GET'])
 @app.route('/api/matchup-chat/sessions/<session_id>', methods=['GET'])
-def get_matchup_chat_session(session_id):
+def get_matchup_chat_session(session_id, league_id=None):
     """Get a specific matchup chat session with all messages"""
     try:
         try:
@@ -8151,8 +8227,9 @@ def get_matchup_chat_session(session_id):
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/<league_id>/api/matchup-chat/sessions/<session_id>/messages', methods=['DELETE'])
 @app.route('/api/matchup-chat/sessions/<session_id>/messages', methods=['DELETE'])
-def delete_matchup_chat_message(session_id):
+def delete_matchup_chat_message(session_id, league_id=None):
     """Delete a message from a matchup chat session"""
     try:
         try:
@@ -8209,8 +8286,9 @@ def delete_matchup_chat_message(session_id):
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/<league_id>/api/matchup-chat/sessions/<session_id>', methods=['DELETE'])
 @app.route('/api/matchup-chat/sessions/<session_id>', methods=['DELETE'])
-def delete_matchup_chat_session(session_id):
+def delete_matchup_chat_session(session_id, league_id=None):
     """Delete a matchup chat session"""
     try:
         try:
@@ -8236,8 +8314,9 @@ def delete_matchup_chat_session(session_id):
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/<league_id>/api/matchup-chat/sessions/by-game/<game_id>', methods=['DELETE'])
 @app.route('/api/matchup-chat/sessions/by-game/<game_id>', methods=['DELETE'])
-def delete_matchup_chat_sessions_by_game(game_id):
+def delete_matchup_chat_sessions_by_game(game_id, league_id=None):
     """Delete all matchup chat sessions for a specific game_id and clear cached agents"""
     try:
         # Find all sessions with this game_id
@@ -8300,39 +8379,41 @@ def delete_matchup_chat_sessions_by_game(game_id):
 
 
 @app.route('/master-training')
-def master_training():
+@app.route('/<league_id>/master-training')
+def master_training(league_id=None):
     """Master training data browser page."""
     return render_template('master_training.html')
 
 
+@app.route('/<league_id>/api/master-training/columns', methods=['GET'])
 @app.route('/api/master-training/columns', methods=['GET'])
-def master_training_columns():
+def master_training_columns(league_id=None):
     """Get column names and total row count from master training CSV."""
     try:
-        from nba_app.cli.master_training_data import MASTER_TRAINING_PATH
-        
-        if not os.path.exists(MASTER_TRAINING_PATH):
+        master_training_path = get_master_training_path()
+
+        if not os.path.exists(master_training_path):
             return jsonify({'error': 'Master training CSV file not found'}), 404
-        
+
         # Read just the header to get columns
         try:
-            df = pd.read_csv(MASTER_TRAINING_PATH, nrows=0, on_bad_lines='skip', engine='python')
+            df = pd.read_csv(master_training_path, nrows=0, on_bad_lines='skip', engine='python')
         except TypeError:
-            df = pd.read_csv(MASTER_TRAINING_PATH, nrows=0, error_bad_lines=False, warn_bad_lines=True, engine='python')
-        
+            df = pd.read_csv(master_training_path, nrows=0, error_bad_lines=False, warn_bad_lines=True, engine='python')
+
         columns = list(df.columns)
-        
+
         # Count total rows (efficiently, without loading all data)
         total_rows = 0
         try:
             # Use a chunked approach to count rows
             chunk_size = 10000
-            for chunk in pd.read_csv(MASTER_TRAINING_PATH, chunksize=chunk_size, on_bad_lines='skip', engine='python'):
+            for chunk in pd.read_csv(master_training_path, chunksize=chunk_size, on_bad_lines='skip', engine='python'):
                 total_rows += len(chunk)
         except TypeError:
-            for chunk in pd.read_csv(MASTER_TRAINING_PATH, chunksize=chunk_size, error_bad_lines=False, warn_bad_lines=True, engine='python'):
+            for chunk in pd.read_csv(master_training_path, chunksize=chunk_size, error_bad_lines=False, warn_bad_lines=True, engine='python'):
                 total_rows += len(chunk)
-        
+
         return jsonify({
             'columns': columns,
             'total_rows': total_rows
@@ -8343,21 +8424,22 @@ def master_training_columns():
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/<league_id>/api/master-training/rows', methods=['GET'])
 @app.route('/api/master-training/rows', methods=['GET'])
-def master_training_rows():
+def master_training_rows(league_id=None):
     """Get paginated rows from master training CSV with sorting and filtering."""
     try:
-        from nba_app.cli.master_training_data import MASTER_TRAINING_PATH
-        
-        if not os.path.exists(MASTER_TRAINING_PATH):
+        master_training_path = get_master_training_path()
+
+        if not os.path.exists(master_training_path):
             return jsonify({'error': 'Master training CSV file not found'}), 404
-        
+
         offset = int(request.args.get('offset', 0))
         limit = int(request.args.get('limit', 100))  # Default to 100 for initial load
         columns_param = request.args.get('columns', '')
         sort_column = request.args.get('sort_column', '')
         sort_direction = request.args.get('sort_direction', 'asc')
-        
+
         # Parse date filter parameters
         year_min = request.args.get('year_min')
         year_max = request.args.get('year_max')
@@ -8367,15 +8449,15 @@ def master_training_rows():
         day_max = request.args.get('day_max')
         date_start = request.args.get('date_start')  # YYYY-MM-DD format
         date_end = request.args.get('date_end')  # YYYY-MM-DD format
-        
+
         # Parse requested columns
         requested_columns = [col.strip() for col in columns_param.split(',') if col.strip()] if columns_param else []
-        
+
         # Read CSV in chunks to handle large files efficiently
         try:
-            df = pd.read_csv(MASTER_TRAINING_PATH, on_bad_lines='skip', engine='python')
+            df = pd.read_csv(master_training_path, on_bad_lines='skip', engine='python')
         except TypeError:
-            df = pd.read_csv(MASTER_TRAINING_PATH, error_bad_lines=False, warn_bad_lines=True, engine='python')
+            df = pd.read_csv(master_training_path, error_bad_lines=False, warn_bad_lines=True, engine='python')
         
         # Apply date filters before column filtering (need Year, Month, Day columns for filtering)
         if 'Year' in df.columns and 'Month' in df.columns and 'Day' in df.columns:
@@ -8472,6 +8554,643 @@ def master_training_rows():
         import traceback
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500
+
+
+@app.route('/<league_id>/api/market-prices', methods=['GET'])
+@app.route('/api/market-prices', methods=['GET'])
+def get_market_prices(league_id=None):
+    """
+    Get Kalshi market prices for all games on a specific date.
+
+    Uses unauthenticated Kalshi public API to fetch live market prices.
+    Thin wrapper around core/market/kalshi.get_game_market_data().
+    """
+    from nba_app.core.market.kalshi import get_game_market_data
+
+    date_str = request.args.get('date')
+    if not date_str:
+        return jsonify({'success': False, 'error': 'Missing date parameter'}), 400
+
+    try:
+        game_date = datetime.strptime(date_str, '%Y-%m-%d').date()
+    except ValueError:
+        return jsonify({'success': False, 'error': 'Invalid date format'}), 400
+
+    # Get league config
+    league = g.league
+    league_id_str = league.league_id if league else 'nba'
+    games_collection = league.collections.get('games', 'stats_nba')
+
+    # Get games for this date
+    games = list(db[games_collection].find(
+        {'date': date_str},
+        {'game_id': 1, 'homeTeam.name': 1, 'awayTeam.name': 1}
+    ))
+
+    if not games:
+        return jsonify({
+            'success': True,
+            'markets': {},
+            'message': 'No games found for this date'
+        })
+
+    # Fetch market data for each game
+    markets = {}
+    for game in games:
+        game_id = game.get('game_id')
+        home_team = game.get('homeTeam', {}).get('name', '')
+        away_team = game.get('awayTeam', {}).get('name', '')
+
+        if not home_team or not away_team:
+            continue
+
+        try:
+            market_data = get_game_market_data(
+                game_date=game_date,
+                away_team=away_team,
+                home_team=home_team,
+                league_id=league_id_str,
+                use_cache=True,
+                cache_ttl=30  # 30 second cache for live data
+            )
+
+            if market_data:
+                markets[game_id] = market_data.to_dict()
+        except Exception as e:
+            logger.warning(f"Failed to fetch market data for game {game_id}: {e}")
+            continue
+
+    return jsonify({
+        'success': True,
+        'markets': markets
+    })
+
+
+@app.route('/<league_id>/api/market/dashboard', methods=['GET'])
+@app.route('/api/market/dashboard', methods=['GET'])
+def get_market_dashboard(league_id=None):
+    """
+    Get market dashboard data including balance, returns, fills, and settlements.
+
+    Uses authenticated Kalshi API to fetch user's trading statistics.
+    """
+    import os
+    from datetime import timedelta
+    from nba_app.core.market.connector import MarketConnector
+
+    # Check for API credentials
+    api_key = os.environ.get('KALSHI_API_KEY')
+    private_key_dir = os.environ.get('KALSHI_PRIVATE_KEY_DIR')
+
+    if not api_key or not private_key_dir:
+        return jsonify({
+            'success': False,
+            'error': 'Kalshi API credentials not configured'
+        }), 400
+
+    try:
+        connector = MarketConnector({
+            'KALSHI_API_KEY': api_key,
+            'KALSHI_PRIVATE_KEY_DIR': private_key_dir
+        })
+    except Exception as e:
+        logger.error(f"Failed to initialize MarketConnector: {e}")
+        return jsonify({
+            'success': False,
+            'error': f'Failed to connect to Kalshi API: {str(e)}'
+        }), 500
+
+    try:
+        # Get balance
+        balance_resp = connector.get_balance()
+        balance_cents = balance_resp.get('balance', 0)
+
+        # Get settlements for returns calculation
+        settlements_resp = connector.get_settlements(limit=100)
+        settlements = settlements_resp.get('settlements', [])
+        settlements_cursor = settlements_resp.get('cursor')
+
+        # Get fills
+        fills_resp = connector.get_fills(limit=100)
+        fills = fills_resp.get('fills', [])
+        fills_cursor = fills_resp.get('cursor')
+
+        # Calculate time-based returns from settlements
+        now = datetime.now()
+        ts_24h = int((now - timedelta(hours=24)).timestamp() * 1000)
+        ts_7d = int((now - timedelta(days=7)).timestamp() * 1000)
+        ts_30d = int((now - timedelta(days=30)).timestamp() * 1000)
+
+        total_return_cents = 0
+        return_24h_cents = 0
+        return_7d_cents = 0
+        return_30d_cents = 0
+        winning_trades = 0
+        losing_trades = 0
+
+        for s in settlements:
+            revenue = s.get('revenue', 0)
+            ts = s.get('settled_time', 0)
+
+            total_return_cents += revenue
+            if ts >= ts_24h:
+                return_24h_cents += revenue
+            if ts >= ts_7d:
+                return_7d_cents += revenue
+            if ts >= ts_30d:
+                return_30d_cents += revenue
+
+            if revenue > 0:
+                winning_trades += 1
+            elif revenue < 0:
+                losing_trades += 1
+
+        # Calculate total invested from fills
+        total_invested_cents = 0
+        for f in fills:
+            # Each fill has a cost (price * count in cents)
+            if f.get('side') == 'yes':
+                total_invested_cents += f.get('yes_price', 0) * f.get('count', 0)
+            else:
+                total_invested_cents += f.get('no_price', 0) * f.get('count', 0)
+
+        # Calculate ROI
+        total_trades = winning_trades + losing_trades
+        roi = (total_return_cents / total_invested_cents * 100) if total_invested_cents > 0 else 0
+        win_rate = (winning_trades / total_trades * 100) if total_trades > 0 else 0
+
+        # Format recent fills for display
+        recent_fills = []
+        for f in fills[:20]:
+            recent_fills.append({
+                'created_time': f.get('created_time'),
+                'ticker': f.get('ticker', ''),
+                'side': f.get('side', ''),
+                'count': f.get('count', 0),
+                'yes_price': f.get('yes_price', 0),
+                'no_price': f.get('no_price', 0),
+            })
+
+        # Format recent settlements for display
+        recent_settlements = []
+        for s in settlements[:20]:
+            recent_settlements.append({
+                'settled_time': s.get('settled_time'),
+                'ticker': s.get('ticker', ''),
+                'market_result': s.get('market_result', ''),
+                'count': s.get('count', 0),
+                'revenue': s.get('revenue', 0),
+            })
+
+        return jsonify({
+            'success': True,
+            'stats': {
+                'balance_cents': balance_cents,
+                'total_return_cents': total_return_cents,
+                'return_24h_cents': return_24h_cents,
+                'return_7d_cents': return_7d_cents,
+                'return_30d_cents': return_30d_cents,
+                'total_invested_cents': total_invested_cents,
+                'roi': roi,
+                'total_trades': total_trades,
+                'winning_trades': winning_trades,
+                'losing_trades': losing_trades,
+                'win_rate': win_rate,
+            },
+            'recent_fills': recent_fills,
+            'recent_settlements': recent_settlements,
+            'fills_cursor': fills_cursor,
+            'settlements_cursor': settlements_cursor,
+            'cumulative_data': []  # TODO: Add historical data for chart
+        })
+
+    except Exception as e:
+        import traceback
+        logger.error(f"Market dashboard error: {e}")
+        traceback.print_exc()
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
+@app.route('/<league_id>/api/market/fills', methods=['GET'])
+@app.route('/api/market/fills', methods=['GET'])
+def get_market_fills(league_id=None):
+    """Get paginated fills from Kalshi API."""
+    import os
+    from nba_app.core.market.connector import MarketConnector
+
+    cursor = request.args.get('cursor')
+
+    # Check for API credentials
+    api_key = os.environ.get('KALSHI_API_KEY')
+    private_key_dir = os.environ.get('KALSHI_PRIVATE_KEY_DIR')
+
+    if not api_key or not private_key_dir:
+        return jsonify({
+            'success': False,
+            'error': 'Kalshi API credentials not configured'
+        }), 400
+
+    try:
+        connector = MarketConnector({
+            'KALSHI_API_KEY': api_key,
+            'KALSHI_PRIVATE_KEY_DIR': private_key_dir
+        })
+
+        fills_resp = connector.get_fills(limit=100, cursor=cursor)
+        fills = fills_resp.get('fills', [])
+        next_cursor = fills_resp.get('cursor')
+
+        formatted_fills = []
+        for f in fills:
+            formatted_fills.append({
+                'created_time': f.get('created_time'),
+                'ticker': f.get('ticker', ''),
+                'side': f.get('side', ''),
+                'count': f.get('count', 0),
+                'yes_price': f.get('yes_price', 0),
+                'no_price': f.get('no_price', 0),
+            })
+
+        return jsonify({
+            'success': True,
+            'fills': formatted_fills,
+            'cursor': next_cursor
+        })
+
+    except Exception as e:
+        logger.error(f"Market fills error: {e}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
+@app.route('/<league_id>/api/market/settlements', methods=['GET'])
+@app.route('/api/market/settlements', methods=['GET'])
+def get_market_settlements(league_id=None):
+    """Get paginated settlements from Kalshi API."""
+    import os
+    from nba_app.core.market.connector import MarketConnector
+
+    cursor = request.args.get('cursor')
+
+    # Check for API credentials
+    api_key = os.environ.get('KALSHI_API_KEY')
+    private_key_dir = os.environ.get('KALSHI_PRIVATE_KEY_DIR')
+
+    if not api_key or not private_key_dir:
+        return jsonify({
+            'success': False,
+            'error': 'Kalshi API credentials not configured'
+        }), 400
+
+    try:
+        connector = MarketConnector({
+            'KALSHI_API_KEY': api_key,
+            'KALSHI_PRIVATE_KEY_DIR': private_key_dir
+        })
+
+        settlements_resp = connector.get_settlements(limit=100, cursor=cursor)
+        settlements = settlements_resp.get('settlements', [])
+        next_cursor = settlements_resp.get('cursor')
+
+        formatted_settlements = []
+        for s in settlements:
+            formatted_settlements.append({
+                'settled_time': s.get('settled_time'),
+                'ticker': s.get('ticker', ''),
+                'market_result': s.get('market_result', ''),
+                'count': s.get('count', 0),
+                'revenue': s.get('revenue', 0),
+            })
+
+        return jsonify({
+            'success': True,
+            'settlements': formatted_settlements,
+            'cursor': next_cursor
+        })
+
+    except Exception as e:
+        logger.error(f"Market settlements error: {e}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
+@app.route('/<league_id>/api/live-games', methods=['GET'])
+@app.route('/api/live-games', methods=['GET'])
+def get_live_games(league_id=None):
+    """
+    Get live game data (scores, period, clock, status) from ESPN API.
+
+    Used for live polling to update game cards and modal with real-time data.
+    """
+    date_str = request.args.get('date')
+    if not date_str:
+        return jsonify({'success': False, 'error': 'Missing date parameter'}), 400
+
+    try:
+        game_date = datetime.strptime(date_str, '%Y-%m-%d').date()
+    except ValueError:
+        return jsonify({'success': False, 'error': 'Invalid date format'}), 400
+
+    # Get league config
+    league = g.league
+    league_id_str = league.league_id if league else 'nba'
+
+    # Fetch from ESPN API using league config template
+    date_yyyymmdd = date_str.replace('-', '')
+    try:
+        espn_url = league.espn_endpoint('scoreboard_site_template').format(YYYYMMDD=date_yyyymmdd)
+    except Exception:
+        # Fallback for NBA
+        espn_url = f"https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard?dates={date_yyyymmdd}"
+
+    live_games = {}
+    try:
+        import requests
+        resp = requests.get(espn_url, timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+
+        for event in data.get('events', []):
+            game_id = event.get('id')
+            if not game_id:
+                continue
+
+            # Extract status - can be string or dict
+            status_obj = event.get('status', {})
+            game_status = 'pre'
+            game_completed = False
+            period = None
+            clock = None
+            status_detail = None
+
+            if isinstance(status_obj, str):
+                if status_obj.lower() in ('final', 'completed', 'post'):
+                    game_status = 'post'
+                    game_completed = True
+                elif status_obj.lower() in ('active', 'in', 'in progress', 'live'):
+                    game_status = 'in'
+                else:
+                    game_status = 'pre'
+            elif isinstance(status_obj, dict):
+                status_type = status_obj.get('type', {})
+                if isinstance(status_type, dict):
+                    raw_status = status_type.get('name', '').lower()
+                    game_completed = status_type.get('completed', False)
+                    # Get human-readable status detail (e.g., "Halftime", "End of 3rd")
+                    status_detail = status_type.get('shortDetail') or status_type.get('detail')
+                    # Normalize ESPN status names to 'pre', 'in', or 'post'
+                    if game_completed or 'final' in raw_status or 'post' in raw_status:
+                        game_status = 'post'
+                    elif 'progress' in raw_status or 'halftime' in raw_status or raw_status == 'in':
+                        game_status = 'in'
+                    else:
+                        game_status = 'pre'
+                period = status_obj.get('period')
+                clock = status_obj.get('displayClock')
+
+            # Extract scores from competitors
+            home_score = None
+            away_score = None
+            competitions = event.get('competitions', [])
+            if competitions:
+                competitors = competitions[0].get('competitors', [])
+                for comp in competitors:
+                    score_val = comp.get('score')
+                    # Only parse if score exists and is not empty
+                    if score_val is not None and score_val != '':
+                        try:
+                            score = int(score_val)
+                            if comp.get('homeAway') == 'home':
+                                home_score = score
+                            else:
+                                away_score = score
+                        except (ValueError, TypeError):
+                            pass
+
+            live_games[game_id] = {
+                'status': game_status,
+                'completed': game_completed,
+                'period': period,
+                'clock': clock,
+                'status_detail': status_detail,
+                'home_score': home_score,
+                'away_score': away_score
+            }
+
+    except Exception as e:
+        logger.warning(f"Failed to fetch live games from ESPN: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+    return jsonify({
+        'success': True,
+        'games': live_games
+    })
+
+
+@app.route('/<league_id>/api/portfolio/game-positions', methods=['GET'])
+@app.route('/api/portfolio/game-positions', methods=['GET'])
+def get_portfolio_game_positions(league_id=None):
+    """
+    Get portfolio positions, orders, and fills for games on a specific date.
+
+    Uses authenticated Kalshi API to fetch user's trading activity.
+    Thin wrapper around core/market/kalshi.match_portfolio_to_games().
+    """
+    import os
+    from nba_app.core.market.connector import MarketConnector
+    from nba_app.core.market.kalshi import match_portfolio_to_games
+    from nba_app.core.league_config import load_league_config
+
+    date_str = request.args.get('date')
+    if not date_str:
+        return jsonify({'success': False, 'error': 'Missing date parameter'}), 400
+
+    try:
+        game_date = datetime.strptime(date_str, '%Y-%m-%d').date()
+    except ValueError:
+        return jsonify({'success': False, 'error': 'Invalid date format'}), 400
+
+    # Check for API credentials
+    api_key = os.environ.get('KALSHI_API_KEY')
+    private_key_dir = os.environ.get('KALSHI_PRIVATE_KEY_DIR')
+
+    if not api_key or not private_key_dir:
+        return jsonify({
+            'success': True,
+            'available': False,
+            'message': 'Kalshi API credentials not configured'
+        })
+
+    try:
+        connector = MarketConnector({
+            'KALSHI_API_KEY': api_key,
+            'KALSHI_PRIVATE_KEY_DIR': private_key_dir
+        })
+    except Exception as e:
+        logger.error(f"Failed to initialize MarketConnector: {e}")
+        return jsonify({
+            'success': True,
+            'available': False,
+            'message': 'Failed to connect to Kalshi API'
+        })
+
+    # Get league from request context
+    league_id = getattr(g, "league_id", "nba")
+    league_config = getattr(g, 'league', None)
+    games_collection = league_config.collections.get('games', 'stats_nba') if league_config else 'stats_nba'
+
+    # Get games for this date
+    games = list(db[games_collection].find(
+        {'date': date_str},
+        {'game_id': 1, 'homeTeam.name': 1, 'awayTeam.name': 1}
+    ))
+
+    if not games:
+        return jsonify({
+            'success': True,
+            'available': True,
+            'positions': {},
+            'message': 'No games found for this date'
+        })
+
+    # Get series tickers for filtering Kalshi data by league
+    try:
+        league_cfg = load_league_config(league_id)
+        series_ticker = league_cfg.raw.get("market", {}).get("series_ticker", "KXNBAGAME")
+        spread_series_ticker = league_cfg.raw.get("market", {}).get("spread_series_ticker", "")
+    except Exception:
+        series_ticker = "KXNBAGAME" if league_id == "nba" else "KXNCAAMBGAME"
+        spread_series_ticker = "KXNBASPREAD" if league_id == "nba" else "KXNCAAMBSPREAD"
+
+    # Fetch raw portfolio data from Kalshi API
+    try:
+        positions_resp = connector.get_positions(limit=200)
+        all_positions = positions_resp.get('market_positions', [])
+    except Exception as e:
+        logger.error(f"Failed to fetch positions: {e}")
+        all_positions = []
+
+    # Fetch recent fills (last 24 hours)
+    try:
+        min_ts = int((datetime.now(utc).timestamp() - 86400) * 1000)
+        fills_resp = connector.get_fills(min_ts=min_ts, limit=200)
+        all_fills = fills_resp.get('fills', [])
+
+        # DEBUG: Log ALL unique tickers and event_tickers from raw Kalshi response
+        all_raw_tickers = set()
+        all_raw_event_tickers = set()
+        for f in all_fills:
+            if f.get('ticker'):
+                all_raw_tickers.add(f.get('ticker'))
+            if f.get('event_ticker'):
+                all_raw_event_tickers.add(f.get('event_ticker'))
+
+        logger.info(f"[RAW KALSHI DEBUG] Total fills from API: {len(all_fills)}")
+        logger.info(f"[RAW KALSHI DEBUG] Unique tickers: {sorted(all_raw_tickers)}")
+        logger.info(f"[RAW KALSHI DEBUG] Unique event_tickers: {sorted(all_raw_event_tickers)}")
+
+        # Check specifically for SPREAD
+        spread_tickers = [t for t in all_raw_tickers if 'SPREAD' in t.upper()]
+        spread_event_tickers = [t for t in all_raw_event_tickers if 'SPREAD' in t.upper()]
+        logger.info(f"[RAW KALSHI DEBUG] Spread tickers found: {spread_tickers}")
+        logger.info(f"[RAW KALSHI DEBUG] Spread event_tickers found: {spread_event_tickers}")
+    except Exception as e:
+        logger.error(f"Failed to fetch fills: {e}")
+        all_fills = []
+
+    # Fetch open orders
+    try:
+        orders_resp = connector.get_orders(status='resting', limit=200)
+        all_orders = orders_resp.get('orders', [])
+    except Exception as e:
+        logger.error(f"Failed to fetch orders: {e}")
+        all_orders = []
+
+    # Fetch settlements for this date range to determine won/lost
+    try:
+        # Get settlements from yesterday through tomorrow to catch all relevant games
+        min_ts = int((datetime.combine(game_date, datetime.min.time()).timestamp() - 86400) * 1000)
+        settlements_resp = connector.get_settlements(min_ts=min_ts, limit=200)
+        all_settlements = settlements_resp.get('settlements', [])
+    except Exception as e:
+        logger.error(f"Failed to fetch settlements: {e}")
+        all_settlements = []
+
+    # Filter all Kalshi data to only include items for the current league's series_ticker
+    # Also include spread series ticker to show spread fills alongside W/L fills
+    # Also include MULTIGAME combo fills (they contain legs for our league's games)
+    def matches_league(item):
+        ticker = item.get('ticker', '') or item.get('event_ticker', '')
+        if ticker.startswith(series_ticker):
+            return True
+        if spread_series_ticker and ticker.startswith(spread_series_ticker):
+            return True
+        # Include MULTIGAME combo fills - we'll filter by legs later
+        if 'MULTIGAME' in ticker.upper():
+            return True
+        return False
+
+    # Debug: log ALL fills from Kalshi API (before any filtering)
+    logger.info(f"[SPREAD DEBUG] Raw fills from Kalshi: {len(all_fills)} total")
+    spread_fills_before = [f for f in all_fills if 'SPREAD' in f.get('ticker', '').upper()]
+    logger.info(f"[SPREAD DEBUG] Spread fills in raw response: {len(spread_fills_before)}")
+    for sf in spread_fills_before[:5]:
+        logger.info(f"[SPREAD DEBUG]   RAW ticker: {sf.get('ticker')}")
+
+    all_positions = [p for p in all_positions if matches_league(p)]
+    all_fills = [f for f in all_fills if matches_league(f)]
+    all_orders = [o for o in all_orders if matches_league(o)]
+    all_settlements = [s for s in all_settlements if matches_league(s)]
+
+    # Debug: log spread fills after filtering
+    spread_fills_after = [f for f in all_fills if f.get('ticker', '').startswith('KXNBASPREAD')]
+    logger.info(f"[SPREAD DEBUG] After filter: {len(spread_fills_after)} spread fills, series_ticker={series_ticker}, spread_series_ticker={spread_series_ticker}")
+
+    # Use core layer to match portfolio items to games
+    result = match_portfolio_to_games(
+        games=games,
+        positions=all_positions,
+        fills=all_fills,
+        orders=all_orders,
+        settlements=all_settlements,
+        game_date=game_date,
+        league_id=league_id
+    )
+
+    # Include debug info for spread fills
+    spread_fills_count = len([f for f in all_fills if f.get('ticker', '').startswith('KXNBASPREAD')])
+    total_matched_fills = sum(len(gd.get('fills', [])) for gd in result.game_data.values())
+    unmatched_spread_tickers = [f.get('ticker') for f in result.unmatched_fills if f.get('ticker', '').startswith('KXNBASPREAD')]
+
+    # Get all unique fill tickers that passed filtering
+    all_fill_tickers = list(set(f.get('ticker', '') for f in all_fills))
+    spread_fill_tickers = [t for t in all_fill_tickers if 'SPREAD' in t.upper()]
+
+    return jsonify({
+        'success': True,
+        'available': True,
+        'date': date_str,
+        'positions': result.game_data,
+        'fetched_at': datetime.now(utc).isoformat(),
+        '_debug': {
+            'spread_fills_passed_to_core': spread_fills_count,
+            'spread_fill_tickers': spread_fill_tickers[:10],
+            'total_matched_fills': total_matched_fills,
+            'unmatched_fills_count': len(result.unmatched_fills),
+            'unmatched_spread_tickers': unmatched_spread_tickers[:5],
+            'all_unmatched_tickers': [f.get('ticker') for f in result.unmatched_fills][:10],
+            'games_count': len(games),
+            'spread_series_ticker': spread_series_ticker,
+            'core_debug': result.debug_info
+        }
+    })
 
 
 if __name__ == '__main__':

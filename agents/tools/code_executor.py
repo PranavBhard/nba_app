@@ -51,12 +51,17 @@ class CodeExecutor:
         
         # Initialize MongoDB if not provided
         if db is None:
-            from nba_app.cli.Mongo import Mongo
+            from nba_app.core.mongo import Mongo
             mongo = Mongo()
             self.db = mongo.db
         else:
             self.db = db
-        
+
+        # Initialize repositories
+        from nba_app.core.data import GamesRepository, PlayerStatsRepository
+        self._games_repo = GamesRepository(self.db)
+        self._players_repo = PlayerStatsRepository(self.db)
+
         # Create artifacts directory for saved files
         self.artifacts_dir = os.path.join(parent_dir, 'model_output', 'feature_artifacts')
         os.makedirs(self.artifacts_dir, exist_ok=True)
@@ -91,42 +96,36 @@ class CodeExecutor:
         # Helper functions for MongoDB and CSV operations
         def get_games(query_dict: Dict, limit: Optional[int] = None) -> List[Dict]:
             """Query stats_nba collection for games.
-            
+
             Args:
                 query_dict: MongoDB query dictionary (e.g., {'season': '2023-2024', 'year': 2023})
                 limit: Optional limit on number of games to return
-                
+
             Returns:
                 List of game documents
             """
-            cursor = self.db.stats_nba.find(query_dict)
-            if limit:
-                cursor = cursor.limit(limit)
-            return list(cursor)
-        
+            return self._games_repo.find(query_dict, limit=limit or 0)
+
         def get_player_stats(query_dict: Dict, limit: Optional[int] = None) -> List[Dict]:
             """Query stats_nba_players collection for player statistics.
-            
+
             Args:
                 query_dict: MongoDB query dictionary
                 limit: Optional limit on number of records to return
-                
+
             Returns:
                 List of player stat documents
             """
-            cursor = self.db.stats_nba_players.find(query_dict)
-            if limit:
-                cursor = cursor.limit(limit)
-            return list(cursor)
-        
+            return self._players_repo.find(query_dict, limit=limit or 0)
+
         def get_player_games_in_season(season: str, player_id: str, team: str = None) -> List[str]:
             """Get list of game IDs where a player played (stats.min > 0) in a season.
-            
+
             Args:
                 season: Season string (YYYY-YYYY format, e.g., '2024-2025')
                 player_id: Player ID (ESPN player identifier)
                 team: Optional team abbreviation (e.g., 'LAL', 'BOS'). If provided, filters to games for that team.
-                
+
             Returns:
                 List of game IDs (strings) where the player played, sorted by date ascending (oldest first)
             """
@@ -135,19 +134,20 @@ class CodeExecutor:
                 'player_id': player_id,
                 'stats.min': {'$gt': 0}  # Only games where player played
             }
-            
+
             if team:
                 query['team'] = team
-            
+
             # Get games and sort by date ascending
-            games = list(self.db.stats_nba_players.find(
+            games = self._players_repo.find(
                 query,
-                {'game_id': 1, 'date': 1}
-            ).sort('date', 1))
-            
+                projection={'game_id': 1, 'date': 1},
+                sort=[('date', 1)]
+            )
+
             # Extract game IDs
             game_ids = [str(game.get('game_id', '')) for game in games if game.get('game_id')]
-            
+
             return game_ids
         
         def save_feature_csv(df: pd.DataFrame, filename: str) -> str:

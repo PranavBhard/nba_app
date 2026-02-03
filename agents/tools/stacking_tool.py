@@ -4,6 +4,7 @@ Stacking Tool - Trains meta-models that combine predictions from multiple base m
 
 import sys
 import os
+import re
 import numpy as np
 import pandas as pd
 from typing import Dict, List, Optional, Tuple
@@ -26,30 +27,37 @@ if parent_dir not in sys.path:
 from nba_app.agents.tools.experiment_runner import ExperimentRunner
 from nba_app.agents.tools.dataset_builder import DatasetBuilder
 from nba_app.agents.tools.run_tracker import RunTracker
-from nba_app.cli.train import read_csv_safe
+from nba_app.core.data import ClassifierConfigRepository
+from nba_app.cli_old.train import read_csv_safe
 from nba_app.agents.schemas.experiment_config import ExperimentConfig
 
 
 class StackingTrainer:
     """Trains stacked models that combine multiple base model predictions"""
-    
-    def __init__(self, db=None):
+
+    def __init__(self, db=None, league=None):
         """
         Initialize StackingTrainer.
-        
+
         Args:
             db: MongoDB database instance (optional)
+            league: LeagueConfig instance for league-specific collections
         """
         if db is None:
-            from nba_app.cli.Mongo import Mongo
+            from nba_app.core.mongo import Mongo
             mongo = Mongo()
             self.db = mongo.db
         else:
             self.db = db
-        
-        self.experiment_runner = ExperimentRunner(db=self.db)
-        self.dataset_builder = DatasetBuilder(db=self.db)
-        self.run_tracker = RunTracker(db=self.db)
+
+        self.league = league
+
+        # Initialize repository with league awareness
+        self._classifier_repo = ClassifierConfigRepository(self.db, league=league)
+
+        self.experiment_runner = ExperimentRunner(db=self.db, league=league)
+        self.dataset_builder = DatasetBuilder(db=self.db, league=league)
+        self.run_tracker = RunTracker(db=self.db, league=league)
     
     def train_stacked_model(
         self,
@@ -226,29 +234,22 @@ class StackingTrainer:
             df_cal = df[cal_mask].copy()
             df_eval = df[eval_mask].copy()
             df_train = df[train_mask].copy()
-            
-            # Rule 5: Combine train + calibration for meta-model training (all years < evaluation_year)
-            meta_train_mask = df['SeasonStartYear'] < evaluation_year
-            df_meta_train = df[meta_train_mask].copy()
-            
+
             if len(df_cal) == 0:
                 raise ValueError(f"No data found for calibration years {calibration_years}")
             if len(df_eval) == 0:
                 raise ValueError(f"No data found for evaluation year {evaluation_year}")
-            if len(df_meta_train) == 0:
-                raise ValueError(f"No data found for meta-model training (years < {evaluation_year})")
-            
-            print(f"[STACKING] Rule 5: Temporal split:")
-            print(f"[STACKING]   Train period: {begin_year} to {min(calibration_years)-1 if calibration_years else evaluation_year-1} ({len(df_train)} games)")
-            print(f"[STACKING]   Calibration period: {calibration_years} ({len(df_cal)} games)")
-            print(f"[STACKING]   Meta-model training: Train+Calibration ({len(df_meta_train)} games)")
+
+            print(f"[STACKING] Temporal split:")
+            print(f"[STACKING]   Base model train period: {begin_year} to {min(calibration_years)-1 if calibration_years else evaluation_year-1} ({len(df_train)} games)")
+            print(f"[STACKING]   Meta-model training (calibration only): {calibration_years} ({len(df_cal)} games)")
             print(f"[STACKING]   Evaluation period: {evaluation_year} ({len(df_eval)} games)")
-            
-            # Rule 5: Generate stacking training data on TRAIN+CALIBRATION years (all years < evaluation_year)
-            # This ensures meta-model is trained on maximum OOF data while respecting temporal split
+
+            # Meta-model trains ONLY on calibration years (base models' OOF predictions)
+            # Do NOT reuse base model training rows - those would be in-sample predictions
             stacking_df = self._generate_stacking_data(
                 base_models_info=base_models_info,
-                df=df_meta_train,  # Use all years < evaluation_year
+                df=df_cal,  # Use ONLY calibration years for meta-model training
                 calibration_years=calibration_years,
                 stacking_mode=stacking_mode,
                 meta_features=meta_features,
@@ -263,7 +264,7 @@ class StackingTrainer:
                 meta_c_value=meta_c_value
             )
             
-            # Evaluate stacked model on evaluation period (Rule 5: evaluation only on evaluation_year)
+            # Evaluate stacked model on evaluation period
             metrics, diagnostics = self._evaluate_stacked_model(
                 meta_model=meta_model,
                 base_models_info=base_models_info,
@@ -271,8 +272,8 @@ class StackingTrainer:
                 evaluation_year=evaluation_year,
                 calibration_years=calibration_years,
                 begin_year=begin_year,
-                n_train_samples=len(df_train),  # Original training period
-                n_cal_samples=len(df_cal),      # Calibration period
+                n_train_samples=len(df_train),  # Base models' training period (for diagnostics)
+                n_cal_samples=len(df_cal),      # Meta-model training period (calibration years only)
                 stacking_mode=stacking_mode,
                 meta_features=meta_features,
                 use_disagree=use_disagree,
@@ -347,18 +348,16 @@ class StackingTrainer:
         for base_id in base_ids:
             # Try to load as MongoDB config first (preferred)
             try:
-                from nba_app.cli.Mongo import Mongo
-                mongo = Mongo()
                 print(f"[STACKING] Loading base model {base_id} from MongoDB config...")
-                
+
                 # Check if base_id is a valid ObjectId
                 try:
                     obj_id = ObjectId(base_id)
                 except Exception as e:
                     print(f"[STACKING] Invalid ObjectId format for {base_id}: {e}")
                     raise ValueError(f"Base model {base_id} is not a valid MongoDB ObjectId")
-                
-                config = mongo.db.model_config_nba.find_one({'_id': obj_id})
+
+                config = self._classifier_repo.find_one({'_id': obj_id})
                 if config:
                     print(f"[STACKING] ✅ Found MongoDB config for {base_id}")
                     # Load model from MongoDB config
@@ -684,7 +683,7 @@ class StackingTrainer:
         # Exclude prediction columns EXCEPT those explicitly requested as meta-features
         pred_cols = ['pred_home_points', 'pred_away_points', 'pred_point_total']
         # Only exclude pred_margin if NOT explicitly requested as meta-feature
-        if 'pred_margin' not in meta_features:
+        if not meta_features or 'pred_margin' not in meta_features:
             pred_cols.append('pred_margin')
         excluded_cols.extend([c for c in pred_cols if c in df.columns])
         
@@ -693,7 +692,8 @@ class StackingTrainer:
         
         # Get predictions from each base model (each uses its own feature set)
         stacking_data = {}
-        
+        used_model_names = set()  # Track used names to avoid collisions
+
         for i, model_info in enumerate(base_models_info):
             model = model_info['model']
             scaler = model_info['scaler']
@@ -726,7 +726,10 @@ class StackingTrainer:
                 else:
                     # Missing feature - fill with 0.0
                     X[:, idx] = 0.0
-            
+
+            # Handle NaN and Inf values - replace with 0.0 (safe default)
+            X = np.nan_to_num(X, nan=0.0, posinf=0.0, neginf=0.0)
+
             # Scale features if scaler exists
             if scaler is not None:
                 # Now X has the correct shape (all features in training order)
@@ -746,13 +749,30 @@ class StackingTrainer:
             y_proba = model.predict_proba(X_scaled)
             p_home_win = y_proba[:, 1]  # Probability of home win
             
-            # Store predictions with model identifier (use shortened run_id for cleaner names)
-            model_id = model_info['run_id']
-            # Use first 8 chars of run_id for feature names (e.g., 'p_550e8400')
-            model_id_short = model_id[:8] if len(model_id) > 8 else model_id
+            # Store predictions with model identifier
+            # Prefer config 'name' field if available, otherwise use shortened run_id
+            config = model_info.get('config', {})
+            model_name = config.get('name')
+            if model_name:
+                # Sanitize name for use as column name (replace spaces/special chars with underscore)
+                model_id_short = re.sub(r'[^a-zA-Z0-9_]', '_', model_name)
+            else:
+                # Fallback to first 8 chars of run_id (e.g., 'p_550e8400')
+                model_id = model_info['run_id']
+                model_id_short = model_id[:8] if len(model_id) > 8 else model_id
+
+            # Handle name collisions by appending a number
+            base_name = model_id_short
+            counter = 1
+            while model_id_short in used_model_names:
+                model_id_short = f"{base_name}_{counter}"
+                counter += 1
+            used_model_names.add(model_id_short)
+
             stacking_data[f'p_{model_id_short}'] = p_home_win
         
         # For informed stacking, add derived features if requested
+        print(f"[STACKING] _generate_stacking_data: stacking_mode={stacking_mode}, meta_features={meta_features}, use_disagree={use_disagree}, use_conf={use_conf}")
         if stacking_mode == 'informed':
             # Get prediction column names (all columns starting with 'p_')
             pred_cols = [col for col in stacking_data.keys() if col.startswith('p_')]
@@ -779,6 +799,7 @@ class StackingTrainer:
             
             # Add user-provided features if specified
             if meta_features:
+                print(f"[STACKING] Adding user meta-features: {meta_features}")
                 available_features = set(df.columns)
                 meta_cols = ['Year', 'Month', 'Day', 'Home', 'Away', 'game_id', 'SeasonStartYear']
                 target_cols = ['HomeWon']
@@ -788,7 +809,9 @@ class StackingTrainer:
                 if 'pred_margin' not in meta_features:
                     pred_cols_exclude.append('pred_margin')
                 excluded_cols = set(meta_cols + target_cols + [c for c in pred_cols_exclude if c in df.columns])
-                
+                print(f"[STACKING] pred_margin in dataset columns: {'pred_margin' in available_features}")
+                print(f"[STACKING] pred_margin excluded: {'pred_margin' in excluded_cols}")
+
                 for feat_name in meta_features:
                     if feat_name in excluded_cols:
                         print(f"Warning: Meta-feature '{feat_name}' is in excluded columns (metadata/target/predictions). Skipping.")
@@ -800,10 +823,18 @@ class StackingTrainer:
         
         # Add true labels
         stacking_data['HomeWon'] = df['HomeWon'].values
-        
+
         # Create DataFrame
         stacking_df = pd.DataFrame(stacking_data)
-        
+
+        # Handle NaN values in stacking DataFrame
+        # Replace NaN with 0.0 for all columns except HomeWon
+        feature_cols = [c for c in stacking_df.columns if c != 'HomeWon']
+        stacking_df[feature_cols] = stacking_df[feature_cols].fillna(0.0)
+
+        # Drop rows where HomeWon is NaN (can't train without labels)
+        stacking_df = stacking_df.dropna(subset=['HomeWon'])
+
         return stacking_df
     
     def _train_meta_model(
@@ -827,6 +858,9 @@ class StackingTrainer:
         feature_cols = [c for c in stacking_df.columns if c != 'HomeWon']
         X_meta = stacking_df[feature_cols].values
         y_meta = stacking_df['HomeWon'].values
+
+        # Handle any remaining NaN/Inf values
+        X_meta = np.nan_to_num(X_meta, nan=0.0, posinf=0.0, neginf=0.0)
 
         # Create meta-model based on type
         if meta_model_type == 'LogisticRegression':
@@ -892,7 +926,10 @@ class StackingTrainer:
         feature_cols = [c for c in stacking_df.columns if c != 'HomeWon']
         X_meta = stacking_df[feature_cols].values
         y_true = stacking_df['HomeWon'].values
-        
+
+        # Handle any remaining NaN/Inf values
+        X_meta = np.nan_to_num(X_meta, nan=0.0, posinf=0.0, neginf=0.0)
+
         # Get meta-model predictions
         y_proba_meta = meta_model.predict_proba(X_meta)
         y_pred_meta = (y_proba_meta[:, 1] >= 0.5).astype(int)

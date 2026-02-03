@@ -14,26 +14,31 @@ parent_dir = os.path.dirname(os.path.dirname(os.path.dirname(script_dir)))
 if parent_dir not in sys.path:
     sys.path.insert(0, parent_dir)
 
-from nba_app.cli.Mongo import Mongo
+from nba_app.core.mongo import Mongo
+from nba_app.core.data import ExperimentRunsRepository
 
 
 class RunTracker:
     """Manages experiment run tracking in MongoDB"""
-    
-    def __init__(self, db=None):
+
+    def __init__(self, db=None, league=None):
         """
         Initialize RunTracker.
-        
+
         Args:
             db: MongoDB database instance (optional, will create if not provided)
+            league: LeagueConfig instance for league-specific collections
         """
         if db is None:
             mongo = Mongo()
             self.db = mongo.db
         else:
             self.db = db
-        
-        self.collection = self.db.experiment_runs
+
+        self.league = league
+
+        # Initialize repository with league awareness
+        self._repo = ExperimentRunsRepository(self.db, league=league)
     
     def create_run(
         self,
@@ -57,14 +62,11 @@ class RunTracker:
             run_id: Unique identifier for the run
         """
         run_id = str(uuid.uuid4())
-        
+
         # If this is set as baseline, unset all other baselines for this session
         if baseline:
-            self.collection.update_many(
-                {'session_id': session_id, 'baseline': True},
-                {'$set': {'baseline': False}}
-            )
-        
+            self._repo.clear_baselines(session_id)
+
         run_doc = {
             'run_id': run_id,
             'created_at': datetime.utcnow(),
@@ -78,21 +80,21 @@ class RunTracker:
             'session_id': session_id,
             'status': 'created'  # created, running, completed, failed
         }
-        
-        self.collection.insert_one(run_doc)
+
+        self._repo.insert_one(run_doc)
         return run_id
     
     def get_run(self, run_id: str) -> Optional[Dict]:
         """
         Get a run by ID.
-        
+
         Args:
             run_id: Run identifier
-            
+
         Returns:
             Run document or None if not found
         """
-        run = self.collection.find_one({'run_id': run_id})
+        run = self._repo.find_by_run_id(run_id)
         if run:
             # Convert ObjectId to string for JSON serialization
             run['_id'] = str(run['_id'])
@@ -137,59 +139,39 @@ class RunTracker:
         
         if not update_dict:
             return False
-        
-        result = self.collection.update_one(
-            {'run_id': run_id},
-            {'$set': update_dict}
-        )
-        
-        return result.modified_count > 0
+
+        return self._repo.update_run(run_id, update_dict)
     
     def set_baseline(self, run_id: str, session_id: str) -> bool:
         """
         Set a run as the baseline for a session.
-        
+
         Args:
             run_id: Run identifier
             session_id: Chat session ID
-            
+
         Returns:
             True if successful
         """
-        # Unset all other baselines for this session
-        self.collection.update_many(
-            {'session_id': session_id, 'baseline': True},
-            {'$set': {'baseline': False}}
-        )
-        
-        # Set this run as baseline
-        result = self.collection.update_one(
-            {'run_id': run_id, 'session_id': session_id},
-            {'$set': {'baseline': True}}
-        )
-        
-        return result.modified_count > 0
+        return self._repo.set_baseline(run_id, session_id)
     
     def get_baseline(self, session_id: str) -> Optional[Dict]:
         """
         Get the baseline run for a session.
-        
+
         Args:
             session_id: Chat session ID
-            
+
         Returns:
             Baseline run document or None
         """
-        run = self.collection.find_one({
-            'session_id': session_id,
-            'baseline': True
-        })
-        
+        run = self._repo.find_baseline(session_id)
+
         if run:
             run['_id'] = str(run['_id'])
             if 'created_at' in run and isinstance(run['created_at'], datetime):
                 run['created_at'] = run['created_at'].isoformat()
-        
+
         return run
     
     def list_runs(
@@ -202,51 +184,42 @@ class RunTracker:
     ) -> List[Dict]:
         """
         List runs with optional filters.
-        
+
         Args:
             session_id: Filter by session ID
             model_type: Filter by model type
             date_from: Filter runs created after this date
             date_to: Filter runs created before this date
             limit: Maximum number of runs to return
-            
+
         Returns:
             List of run documents (summaries)
         """
-        query = {}
-        
-        if session_id:
-            query['session_id'] = session_id
-        
-        if model_type:
-            query['model_type'] = model_type
-        
-        if date_from or date_to:
-            query['created_at'] = {}
-            if date_from:
-                query['created_at']['$gte'] = date_from
-            if date_to:
-                query['created_at']['$lte'] = date_to
-        
-        runs = list(self.collection.find(query).sort('created_at', -1).limit(limit))
-        
+        runs = self._repo.find_by_date_range(
+            date_from=date_from,
+            date_to=date_to,
+            session_id=session_id,
+            model_type=model_type,
+            limit=limit
+        )
+
         # Convert ObjectIds and datetimes for JSON serialization
         for run in runs:
             run['_id'] = str(run['_id'])
             if 'created_at' in run and isinstance(run['created_at'], datetime):
                 run['created_at'] = run['created_at'].isoformat()
-        
+
         return runs
     
     def get_run_count(self, session_id: str) -> int:
         """
         Get the number of runs for a session.
-        
+
         Args:
             session_id: Chat session ID
-            
+
         Returns:
             Number of runs
         """
-        return self.collection.count_documents({'session_id': session_id})
+        return self._repo.count_by_session(session_id)
 

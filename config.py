@@ -10,5 +10,11 @@ import os
 config = {
     "mongo_conn_str": os.environ.get("MONGO_CONN_STR") or os.environ.get("MONGODB_URI", ""),
     "openai_api_key": os.environ.get("OPENAI_API_KEY", ""),
+    "KALSHI_API_KEY": os.environ.get("KALSHI_API_KEY", ""),
+    "KALSHI_PRIVATE_KEY_DIR": os.environ.get("KALSHI_PRIVATE_KEY_DIR", ""),
+    "KALSHI_READ_KEY": os.environ.get("KALSHI_READ_KEY", ""),
+    "KALSHI_READ_PRIVATE_KEY_DIR": os.environ.get("KALSHI_READ_PRIVATE_KEY_DIR", ""),
+    "STAKE_TOKEN": os.environ.get("STAKE_TOKEN", ""),
+    "SERP_API_KEY": os.environ.get("SERP_API_KEY", ""),
 }
 

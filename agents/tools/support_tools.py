@@ -16,9 +16,10 @@ if parent_dir not in sys.path:
     sys.path.insert(0, parent_dir)
 
 from nba_app.agents.tools.run_tracker import RunTracker
-from nba_app.cli.Mongo import Mongo
-from nba_app.cli.NBAModel import NBAModel
-from nba_app.cli.master_training_data import MASTER_TRAINING_PATH
+from nba_app.core.mongo import Mongo
+from nba_app.core.models.bball_model import BballModel
+from nba_app.core.data import ClassifierConfigRepository, PointsConfigRepository
+from nba_app.core.services.training_data import MASTER_TRAINING_PATH
 from nba_app.agents.utils.json_compression import encode_tool_output
 
 
@@ -28,7 +29,7 @@ class SupportTools:
     def __init__(self, db=None):
         """
         Initialize SupportTools.
-        
+
         Args:
             db: MongoDB database instance (optional)
         """
@@ -37,7 +38,11 @@ class SupportTools:
             self.db = mongo.db
         else:
             self.db = db
-        
+
+        # Initialize repositories
+        self._classifier_repo = ClassifierConfigRepository(self.db)
+        self._points_repo = PointsConfigRepository(self.db)
+
         self.run_tracker = RunTracker(db=self.db)
     
     def list_runs(
@@ -479,7 +484,7 @@ class SupportTools:
             raise ValueError(f"Model {model_id} not found")
         
         # For now, return a placeholder
-        # Full implementation would load the model and call NBAModel.predict()
+        # Full implementation would load the model and call BballModel.predict()
         return encode_tool_output({
             'model_id': model_id,
             'status': 'not_implemented',
@@ -525,90 +530,42 @@ class SupportTools:
     
     def _map_master_features_to_blocks(self, master_features: set) -> Dict[str, List[str]]:
         """
-        Map all features from master CSV to feature blocks.
-        Uses the same logic as web/app.py's load_features_from_master_csv().
-        
+        Map features from master CSV to feature blocks using FEATURE_SETS as SSoT.
+
+        Uses feature_sets.py (which imports from FeatureRegistry) as the canonical
+        source for block-to-feature mappings. Features in master_features that exist
+        in FEATURE_SETS are mapped to their respective blocks.
+
         Args:
             master_features: Set of feature names from master CSV
-            
+
         Returns:
-            Dict mapping block name to list of features
+            Dict mapping block name to list of available features
         """
-        from collections import defaultdict
-        
-        features_by_block = defaultdict(list)
-        
-        for feature in master_features:
-            feature_lower = feature.lower()
-            
-            # Parse feature name to determine block
-            if '|' in feature:
-                parts = feature.split('|')
-                stat_name = parts[0].lower()
-                
-                # Determine feature block based on stat name and patterns
-                # Check in order of specificity (more specific first)
-                if 'inj' in stat_name or 'inj' in feature_lower:
-                    features_by_block['injuries'].append(feature)
-                elif 'player_per' in stat_name or 'team_per' in stat_name or 'starters_per' in stat_name or \
-                     'per1' in stat_name or 'per2' in stat_name or 'per3' in stat_name or 'per_available' in feature_lower:
-                    features_by_block['player_talent'].append(feature)
-                elif 'elo' in stat_name:
-                    features_by_block['elo_strength'].append(feature)
-                elif 'rel' in feature_lower:
-                    features_by_block['era_normalization'].append(feature)
-                elif 'off_rtg' in stat_name or 'assists_ratio' in stat_name:
-                    features_by_block['offensive_engine'].append(feature)
-                elif 'def_rtg' in stat_name or 'blocks' in stat_name or 'reb_total' in stat_name or 'reb_' in stat_name or 'turnovers' in stat_name:
-                    features_by_block['defensive_engine'].append(feature)
-                elif 'efg' in stat_name or 'ts' in stat_name or 'three' in stat_name:
-                    features_by_block['shooting_efficiency'].append(feature)
-                elif 'points' in stat_name or 'wins' in stat_name:
-                    features_by_block['outcome_strength'].append(feature)
-                elif 'pace' in stat_name or 'std' in feature_lower:
-                    features_by_block['pace_volatility'].append(feature)
-                elif 'b2b' in stat_name or 'travel' in stat_name or 'rest' in feature_lower:
-                    features_by_block['schedule_fatigue'].append(feature)
-                elif 'games_played' in stat_name:
-                    if 'days' in feature_lower or 'diff' in feature_lower:
-                        features_by_block['schedule_fatigue'].append(feature)
-                    else:
-                        features_by_block['sample_size'].append(feature)
-                else:
-                    # Default: put in absolute_magnitude
-                    features_by_block['absolute_magnitude'].append(feature)
-            else:
-                # Old format features - try to categorize
-                if 'Per' in feature or ('per' in feature_lower and 'percent' not in feature_lower):
-                    features_by_block['player_talent'].append(feature)
-                elif 'Inj' in feature or 'inj' in feature_lower:
-                    features_by_block['injuries'].append(feature)
-                elif 'Pace' in feature or 'pace' in feature_lower:
-                    features_by_block['pace_volatility'].append(feature)
-                elif 'B2B' in feature or 'Travel' in feature or 'GamesLast' in feature or 'rest' in feature_lower:
-                    features_by_block['schedule_fatigue'].append(feature)
-                elif 'Rel' in feature or 'rel' in feature_lower:
-                    features_by_block['era_normalization'].append(feature)
-                elif 'Elo' in feature or 'elo' in feature_lower:
-                    features_by_block['elo_strength'].append(feature)
-                elif 'GamesPlayed' in feature:
-                    features_by_block['sample_size'].append(feature)
-                else:
-                    features_by_block['absolute_magnitude'].append(feature)
-        
-        # Convert to regular dict and sort features within each block
-        return {block: sorted(features) for block, features in features_by_block.items()}
+        from nba_app.core.features.sets import FEATURE_SETS
+
+        features_by_block = {}
+
+        # Use FEATURE_SETS as the canonical source (SSoT via FeatureRegistry)
+        for block_name, block_features in FEATURE_SETS.items():
+            # Filter to only features that exist in master CSV
+            available_features = [f for f in block_features if f in master_features]
+            if available_features:
+                features_by_block[block_name] = sorted(available_features)
+
+        return features_by_block
     
     def get_features_by_block(self, feature_blocks: List[str]) -> Dict:
         """
-        Get list of features for specified feature blocks, including ALL features from master CSV.
-        Features are mapped to blocks based on their names, and all master CSV features are included
-        (not just those in FEATURE_SETS). This ensures the agent sees all available features.
-        
+        Get list of features for specified feature blocks using FEATURE_SETS as SSoT.
+
+        Features are mapped to blocks using feature_sets.py (which uses FeatureRegistry as SSoT).
+        Only features that exist in both FEATURE_SETS and master CSV are returned.
+
         Args:
             feature_blocks: List of feature block names (e.g., ['offensive_engine', 'defensive_engine'])
                            If None or empty, returns all blocks with features.
-            
+
         Returns:
             Dict with:
                 - features_by_block: Dict mapping block name to list of available features from master CSV
@@ -702,7 +659,7 @@ class SupportTools:
         Explain how a specific feature is calculated.
         
         Args:
-            feature_name: Feature name in new format (e.g., 'wins_blend|none|blend:season:0.80/games_12:0.20|diff')
+            feature_name: Feature name (e.g., 'wins_blend|none|blend:season:0.80/games_12:0.20|diff')
             
         Returns:
             Dict with:
@@ -715,8 +672,8 @@ class SupportTools:
                 - calc_weight: Calculation method (avg, raw, etc.)
                 - perspective: home, away, or diff
         """
-        from nba_app.cli.feature_name_parser import parse_feature_name
-        
+        from nba_app.core.features.parser import parse_feature_name
+
         # Parse the feature name
         components = parse_feature_name(feature_name)
         if not components:
@@ -853,4 +810,687 @@ class SupportTools:
             'model_type': run.get('model_type'),
             'metrics': run.get('metrics', {})
         })
+
+    def get_selected_configs(self) -> Dict:
+        """
+        Get the currently selected model configurations (classifier and points regression).
+
+        These are the configs selected in the web UI that are used for predictions.
+
+        Returns:
+            Dict with:
+                - classifier_config: The selected classifier/binary model config (or None if none selected)
+                - points_config: The selected points regression model config (or None if none selected)
+                - summary: Human-readable summary of selected configs
+        """
+        # Query for selected classifier config
+        classifier_config = self._classifier_repo.get_selected_config()
+
+        # Query for selected points regression config
+        points_config = self._points_repo.get_selected_config()
+
+        # Convert MongoDB documents to dicts (remove _id for JSON serialization)
+        if classifier_config:
+            classifier_config = dict(classifier_config)
+            if '_id' in classifier_config:
+                classifier_config['_id'] = str(classifier_config['_id'])
+
+        if points_config:
+            points_config = dict(points_config)
+            if '_id' in points_config:
+                points_config['_id'] = str(points_config['_id'])
+
+        # Build summary
+        summary_parts = []
+
+        if classifier_config:
+            model_type = classifier_config.get('model_type', 'unknown')
+            name = classifier_config.get('name', 'unnamed')
+            feature_count = len(classifier_config.get('features', []))
+            summary_parts.append(f"Classifier: {name} ({model_type}, {feature_count} features)")
+        else:
+            summary_parts.append("Classifier: None selected")
+
+        if points_config:
+            model_type = points_config.get('model_type', 'unknown')
+            name = points_config.get('name', 'unnamed')
+            feature_count = len(points_config.get('features', []))
+            summary_parts.append(f"Points Regression: {name} ({model_type}, {feature_count} features)")
+        else:
+            summary_parts.append("Points Regression: None selected")
+
+        return encode_tool_output({
+            'classifier_config': classifier_config,
+            'points_config': points_config,
+            'summary': ' | '.join(summary_parts)
+        })
+
+    def get_config_by_id(self, config_id: str, config_type: str = 'classifier') -> Dict:
+        """
+        Get a model configuration by its MongoDB ObjectId.
+
+        Args:
+            config_id: MongoDB ObjectId as string
+            config_type: 'classifier' for model_config_nba, 'points' for model_config_points_nba
+
+        Returns:
+            Dict with the full config document or error message
+        """
+        from bson import ObjectId
+        from bson.errors import InvalidId
+
+        try:
+            oid = ObjectId(config_id)
+        except InvalidId:
+            return encode_tool_output({
+                'error': f"Invalid ObjectId format: {config_id}",
+                'config': None
+            })
+
+        repo = self._classifier_repo if config_type == 'classifier' else self._points_repo
+        config = repo.find_by_id(oid)
+
+        if not config:
+            return encode_tool_output({
+                'error': f"Config not found with id: {config_id} in {config_type} collection",
+                'config': None
+            })
+
+        # Convert ObjectId to string for JSON serialization
+        config = dict(config)
+        config['_id'] = str(config['_id'])
+
+        return encode_tool_output({
+            'config': config,
+            'config_type': config_type,
+            'is_trained': bool(config.get('model_artifact_path')),
+            'is_selected': config.get('selected', False)
+        })
+
+    def list_trained_configs(
+        self,
+        config_type: str = 'classifier',
+        limit: int = 20,
+        include_untrained: bool = False
+    ) -> Dict:
+        """
+        List model configurations with training status and metadata.
+
+        Args:
+            config_type: 'classifier' for model_config_nba, 'points' for model_config_points_nba, 'all' for both
+            limit: Maximum number of configs to return per type
+            include_untrained: Whether to include configs without trained artifacts
+
+        Returns:
+            Dict with list of configs and summary statistics
+        """
+        results = {'classifier_configs': [], 'points_configs': []}
+
+        def process_configs(repo, config_key: str, limit: int):
+            query = {} if include_untrained else {'model_artifact_path': {'$exists': True, '$ne': None}}
+            configs = repo.find(query, sort=[('trained_at', -1)], limit=limit)
+
+            processed = []
+            for config in configs:
+                processed.append({
+                    '_id': str(config['_id']),
+                    'config_hash': config.get('config_hash', '')[:8],  # Short hash for reference
+                    'name': config.get('name', 'unnamed'),
+                    'model_type': config.get('model_type', 'unknown'),
+                    'feature_count': len(config.get('features', [])),
+                    'features': config.get('features', [])[:10],  # First 10 features for preview
+                    'selected': config.get('selected', False),
+                    'trained_at': str(config.get('trained_at', '')) if config.get('trained_at') else None,
+                    'has_artifacts': bool(config.get('model_artifact_path')),
+                    'is_ensemble': config.get('ensemble', False),
+                    'use_time_calibration': config.get('use_time_calibration', False),
+                    'begin_year': config.get('begin_year'),
+                    'calibration_years': config.get('calibration_years', []),
+                    'evaluation_year': config.get('evaluation_year'),
+                    # Dataset reproducibility fields
+                    'dataset_id': config.get('dataset_id'),
+                    'diff_mode': config.get('diff_mode'),
+                    'feature_blocks': config.get('feature_blocks', []),
+                    'include_per': config.get('include_per'),
+                    'run_id': config.get('run_id'),
+                    # Training metrics preview
+                    'accuracy': config.get('accuracy'),
+                    'log_loss': config.get('log_loss'),
+                    # Points-specific fields
+                    'target': config.get('target'),  # 'home_away' or 'margin'
+                })
+            results[config_key] = processed
+
+        if config_type in ['classifier', 'all']:
+            process_configs(self._classifier_repo, 'classifier_configs', limit)
+
+        if config_type in ['points', 'all']:
+            process_configs(self._points_repo, 'points_configs', limit)
+
+        # Summary
+        n_classifier = len(results['classifier_configs'])
+        n_points = len(results['points_configs'])
+        selected_classifier = next((c for c in results['classifier_configs'] if c['selected']), None)
+        selected_points = next((c for c in results['points_configs'] if c['selected']), None)
+
+        return encode_tool_output({
+            **results,
+            'summary': {
+                'classifier_count': n_classifier,
+                'points_count': n_points,
+                'selected_classifier_id': selected_classifier['_id'] if selected_classifier else None,
+                'selected_points_id': selected_points['_id'] if selected_points else None,
+            }
+        })
+
+    def run_prediction_with_config(
+        self,
+        config_id: str,
+        home: str,
+        away: str,
+        config_type: str = 'classifier',
+        game_date: Optional[str] = None,
+        points_config_id: Optional[str] = None
+    ) -> Dict:
+        """
+        Run a prediction using a specific model config (not just the selected one).
+
+        Args:
+            config_id: MongoDB ObjectId of the classifier config to use
+            home: Home team abbreviation (e.g., 'LAL')
+            away: Away team abbreviation (e.g., 'BOS')
+            config_type: 'classifier' (default) - points models are loaded via points_config_id
+            game_date: Optional game date (YYYY-MM-DD). Defaults to today.
+            points_config_id: Optional MongoDB ObjectId of points config to use for pred_margin
+
+        Returns:
+            Dict with prediction results including probabilities, odds, and feature values
+        """
+        from bson import ObjectId
+        from bson.errors import InvalidId
+        from datetime import datetime
+
+        # Import prediction infrastructure
+        from nba_app.agents.tools.matchup_predict import (
+            load_model_from_config,
+            load_points_model,
+            get_season_from_date
+        )
+        from nba_app.core.utils.players import build_player_lists_for_prediction
+        from nba_app.core.services.config_manager import ModelConfigManager
+
+        # Load classifier config
+        try:
+            oid = ObjectId(config_id)
+        except InvalidId:
+            return encode_tool_output({'error': f"Invalid config_id format: {config_id}"})
+
+        config = self._classifier_repo.find_by_id(oid)
+        if not config:
+            return encode_tool_output({'error': f"Classifier config not found: {config_id}"})
+
+        # Validate config is ready for prediction
+        is_valid, error_msg = ModelConfigManager.validate_config_for_prediction(config)
+        if not is_valid:
+            return encode_tool_output({'error': error_msg})
+
+        # Parse game date
+        if game_date:
+            try:
+                game_date_obj = datetime.strptime(game_date, '%Y-%m-%d').date()
+            except ValueError:
+                return encode_tool_output({'error': f'Invalid date format: {game_date}. Use YYYY-MM-DD.'})
+        else:
+            game_date_obj = datetime.now().date()
+        game_date_str = game_date_obj.strftime('%Y-%m-%d')
+        season = get_season_from_date(datetime(game_date_obj.year, game_date_obj.month, game_date_obj.day))
+
+        # Load model
+        model = load_model_from_config(config, self.db)
+        if not model:
+            return encode_tool_output({'error': 'Failed to load model from config artifacts.'})
+
+        # Build player filters
+        player_filters = build_player_lists_for_prediction(
+            home_team=home,
+            away_team=away,
+            season=season,
+            game_id=None,
+            game_doc=None,
+            home_injuries=[],
+            away_injuries=[],
+            home_starters=None,
+            away_starters=None,
+            db=self.db
+        )
+
+        # Load points model if specified
+        additional_features = None
+        points_prediction = None
+
+        if points_config_id:
+            try:
+                points_oid = ObjectId(points_config_id)
+                points_config = self._points_repo.find_by_id(points_oid)
+                if points_config:
+                    points_trainer = load_points_model(points_config, self.db)
+                    if points_trainer:
+                        game_doc = {
+                            'game_id': '',
+                            'date': game_date_str,
+                            'year': game_date_obj.year,
+                            'month': game_date_obj.month,
+                            'day': game_date_obj.day,
+                            'season': season,
+                            'homeTeam': {'name': home},
+                            'awayTeam': {'name': away}
+                        }
+                        points_prediction = points_trainer.predict(game_doc, game_date_str)
+
+                        # Check if classifier needs pred_margin
+                        if hasattr(model, 'feature_names') and model.feature_names and 'pred_margin' in model.feature_names:
+                            pred_margin = None
+                            if 'point_diff_pred' in points_prediction and points_prediction['point_diff_pred'] is not None:
+                                pred_margin = points_prediction['point_diff_pred']
+                            elif 'home_points' in points_prediction and 'away_points' in points_prediction:
+                                pred_home = points_prediction.get('home_points', 0) or 0
+                                pred_away = points_prediction.get('away_points', 0) or 0
+                                pred_margin = pred_home - pred_away
+
+                            if pred_margin is not None:
+                                additional_features = {'pred_margin': pred_margin}
+            except Exception as e:
+                # Continue without points prediction
+                pass
+
+        # Make prediction
+        try:
+            use_calibrated = config.get('use_time_calibration', False)
+            prediction = model.predict_with_player_config(
+                home, away, season, game_date_str, player_filters,
+                use_calibrated=use_calibrated,
+                additional_features=additional_features
+            )
+        except Exception as e:
+            return encode_tool_output({'error': f'Prediction failed: {str(e)}'})
+
+        # Calculate odds
+        home_win_prob = prediction.get('home_win_prob', 0)
+        away_win_prob = 100 - home_win_prob
+
+        def calculate_odds(prob_percent):
+            prob = prob_percent / 100.0
+            if prob >= 0.5:
+                return int(-100 * prob / (1 - prob))
+            else:
+                return int(100 * (1 - prob) / prob)
+
+        result = {
+            'config_id': config_id,
+            'config_name': config.get('name', 'unnamed'),
+            'model_type': config.get('model_type'),
+            'home': home,
+            'away': away,
+            'game_date': game_date_str,
+            'predicted_winner': prediction.get('predicted_winner', 'home' if home_win_prob > 50 else 'away'),
+            'home_win_prob': home_win_prob,
+            'away_win_prob': away_win_prob,
+            'home_odds': calculate_odds(home_win_prob),
+            'away_odds': calculate_odds(away_win_prob),
+            'features_used': len(prediction.get('features_dict', {})),
+        }
+
+        # Add points predictions if available
+        if points_prediction:
+            if 'home_points' in points_prediction and points_prediction['home_points'] is not None:
+                result['home_points_pred'] = round(points_prediction['home_points'])
+            if 'away_points' in points_prediction and points_prediction['away_points'] is not None:
+                result['away_points_pred'] = round(points_prediction['away_points'])
+
+        return encode_tool_output(result)
+
+    def config_to_experiment_spec(self, config_id: str, config_type: str = 'classifier') -> Dict:
+        """
+        Convert a MongoDB model config to an ExperimentConfig-compatible dict.
+
+        This allows the agent to reproduce or modify existing production configs
+        by converting them into the experiment schema format.
+
+        IMPORTANT: This method preserves dataset reproducibility fields (diff_mode,
+        include_per, feature_blocks, point_model_id) from the config when available.
+        When fields are missing, defaults are used and warnings are provided.
+
+        Args:
+            config_id: MongoDB ObjectId of the config
+            config_type: 'classifier' or 'points'
+
+        Returns:
+            Dict that can be passed to run_experiment() with modifications
+        """
+        from bson import ObjectId
+        from bson.errors import InvalidId
+
+        try:
+            oid = ObjectId(config_id)
+        except InvalidId:
+            return encode_tool_output({'error': f"Invalid config_id format: {config_id}"})
+
+        repo = self._classifier_repo if config_type == 'classifier' else self._points_repo
+        config = repo.find_by_id(oid)
+
+        if not config:
+            return encode_tool_output({'error': f"Config not found: {config_id}"})
+
+        # Track defaulted fields for warnings
+        warnings = []
+
+        # Extract dataset reproducibility fields with defaults
+        diff_mode = config.get('diff_mode')
+        if diff_mode is None:
+            diff_mode = 'home_minus_away'
+            warnings.append("diff_mode not stored in config - defaulting to 'home_minus_away'")
+
+        include_per = config.get('include_per')
+        if include_per is None:
+            include_per = config.get('include_per_features', True)
+            if 'include_per_features' not in config:
+                warnings.append("include_per not stored in config - defaulting to True")
+
+        feature_blocks = config.get('feature_blocks', [])
+        point_model_id = config.get('point_model_id')
+
+        # Build experiment config based on type
+        if config_type == 'classifier':
+            experiment_spec = {
+                'task': 'binary_home_win',
+                'model': {
+                    'type': config.get('model_type', 'LogisticRegression'),
+                    'c_value': config.get('best_c_value', 0.1),
+                },
+                'features': {
+                    'blocks': feature_blocks,
+                    'features': config.get('features', []) if not feature_blocks else None,
+                    'diff_mode': diff_mode,
+                    'include_per': include_per,
+                    'point_model_id': point_model_id,
+                },
+                'splits': {
+                    'type': 'year_based_calibration' if config.get('use_time_calibration') else 'time_split',
+                    'begin_year': config.get('begin_year', 2012),
+                    'calibration_years': config.get('calibration_years', [2023]),
+                    'evaluation_year': config.get('evaluation_year', 2024),
+                    'min_games_played': config.get('min_games_played', 15),
+                },
+                'preprocessing': {
+                    'scaler': 'standard',
+                    'impute': 'median',
+                },
+                'use_time_calibration': config.get('use_time_calibration', True),
+                'calibration_method': config.get('calibration_method', 'sigmoid'),
+                'description': f"Reproduced from config {config.get('name', config_id[:8])}",
+            }
+        else:  # points
+            experiment_spec = {
+                'task': 'points_regression',
+                'points_model': {
+                    'type': config.get('model_type', 'Ridge'),
+                    'target': config.get('target', 'home_away'),
+                    'alpha': config.get('best_alpha', 1.0),
+                    'l1_ratio': config.get('l1_ratio'),
+                },
+                'features': {
+                    'blocks': feature_blocks,
+                    'features': config.get('features', []) if not feature_blocks else None,
+                    'diff_mode': diff_mode,
+                    'include_per': include_per,
+                },
+                'splits': {
+                    'type': 'year_based_calibration',
+                    'begin_year': config.get('begin_year', 2012),
+                    'calibration_years': config.get('calibration_years', [2023]),
+                    'evaluation_year': config.get('evaluation_year', 2024),
+                    'min_games_played': config.get('min_games_played', 15),
+                },
+                'preprocessing': {
+                    'scaler': 'standard',
+                    'impute': 'median',
+                },
+                'description': f"Reproduced from points config {config.get('name', config_id[:8])}",
+            }
+
+        result = {
+            'experiment_spec': experiment_spec,
+            'source_config_id': config_id,
+            'source_config_name': config.get('name'),
+            'source_dataset_id': config.get('dataset_id'),
+            'source_run_id': config.get('run_id'),
+            'reproducibility_status': 'full' if not warnings else 'partial',
+        }
+
+        if warnings:
+            result['warnings'] = warnings
+            result['note'] = (
+                'Some dataset fields were not stored in the original config. '
+                'Defaults were used - the reproduced experiment may produce a different dataset. '
+                'Fields with defaults: ' + ', '.join([w.split(' ')[0] for w in warnings])
+            )
+        else:
+            result['note'] = (
+                'Full reproducibility: all dataset fields preserved. '
+                'This spec can be modified and passed to run_experiment().'
+            )
+
+        return encode_tool_output(result)
+
+    def create_model_config(
+        self,
+        config_type: str,
+        model_type: str,
+        features: List[str] = None,
+        feature_blocks: List[str] = None,
+        # Classifier params
+        c_value: float = 0.1,
+        use_time_calibration: bool = True,
+        calibration_method: str = 'sigmoid',
+        # Points params
+        target: str = 'home_away',
+        alpha: float = 1.0,
+        l1_ratio: float = None,
+        # Shared params
+        begin_year: int = 2012,
+        calibration_years: List[int] = None,
+        evaluation_year: int = 2024,
+        min_games_played: int = 15,
+        diff_mode: str = 'home_minus_away',
+        include_per: bool = True,
+        name: str = None,
+        selected: bool = False
+    ) -> Dict:
+        """
+        Create a new model configuration in MongoDB.
+
+        This uses the core ModelConfigManager infrastructure (same as web UI).
+        Configs are upserted by hash - same params = same config (no duplicates).
+
+        Args:
+            config_type: 'classifier' or 'points'
+            model_type: Model type (LogisticRegression, Ridge, etc.)
+            features: List of individual feature names (mutually exclusive with feature_blocks)
+            feature_blocks: List of feature block names (mutually exclusive with features)
+            c_value: Regularization for classifier models
+            use_time_calibration: Use time-based calibration (classifier only)
+            calibration_method: 'sigmoid' or 'isotonic' (classifier only)
+            target: 'home_away' or 'margin' (points only)
+            alpha: Regularization for points models
+            l1_ratio: L1 ratio for ElasticNet (points only)
+            begin_year: Training data start year
+            calibration_years: Years for calibration set
+            evaluation_year: Year for evaluation
+            min_games_played: Minimum games filter
+            diff_mode: Feature differencing mode
+            include_per: Include PER features
+            name: Optional custom config name
+            selected: Whether to mark as selected
+
+        Returns:
+            Dict with config_id, config details, and whether it was newly created or existing
+        """
+        from nba_app.core.services.config_manager import ModelConfigManager
+
+        config_manager = ModelConfigManager(self.db)
+
+        # Resolve features from blocks if needed
+        actual_features = features
+        if feature_blocks and not features:
+            # Get features from blocks using master CSV mapping
+            block_result = self.get_features_by_block(feature_blocks)
+            if isinstance(block_result, str):
+                import json
+                block_result = json.loads(block_result)
+            actual_features = block_result.get('unique_features', [])
+
+        if not actual_features:
+            return encode_tool_output({
+                'error': 'Must provide either features or feature_blocks',
+                'config_id': None
+            })
+
+        if calibration_years is None:
+            calibration_years = [2023]
+
+        try:
+            if config_type == 'classifier':
+                config_id, config = config_manager.create_classifier_config(
+                    model_type=model_type,
+                    features=actual_features,
+                    c_value=c_value,
+                    use_time_calibration=use_time_calibration,
+                    calibration_method=calibration_method,
+                    begin_year=begin_year,
+                    calibration_years=calibration_years,
+                    evaluation_year=evaluation_year,
+                    min_games_played=min_games_played,
+                    diff_mode=diff_mode,
+                    feature_blocks=feature_blocks,
+                    include_per=include_per,
+                    name=name,
+                    selected=selected
+                )
+            else:  # points
+                config_id, config = config_manager.create_points_config(
+                    model_type=model_type,
+                    features=actual_features,
+                    target=target,
+                    alpha=alpha,
+                    l1_ratio=l1_ratio,
+                    begin_year=begin_year,
+                    calibration_years=calibration_years,
+                    evaluation_year=evaluation_year,
+                    min_games_played=min_games_played,
+                    diff_mode=diff_mode,
+                    feature_blocks=feature_blocks,
+                    include_per=include_per,
+                    name=name,
+                    selected=selected
+                )
+
+            return encode_tool_output({
+                'config_id': config_id,
+                'config_hash': config.get('config_hash'),
+                'config_type': config_type,
+                'name': config.get('name'),
+                'model_type': model_type,
+                'feature_count': len(actual_features),
+                'is_trained': bool(config.get('model_artifact_path')),
+                'selected': config.get('selected', False),
+                'message': f"Config created/found with hash {config.get('config_hash', '')[:8]}"
+            })
+
+        except Exception as e:
+            return encode_tool_output({
+                'error': f"Failed to create config: {str(e)}",
+                'config_id': None
+            })
+
+    def run_experiment_from_config(
+        self,
+        config_id: str,
+        config_type: str = 'classifier',
+        modifications: Dict = None,
+        link_to_config: bool = True
+    ) -> Dict:
+        """
+        Run an experiment using an existing config as the base.
+
+        This converts the config to an experiment spec, applies any modifications,
+        and runs the experiment. Optionally links results back to the config.
+
+        Args:
+            config_id: MongoDB ObjectId of the config to use as base
+            config_type: 'classifier' or 'points'
+            modifications: Optional dict of modifications to apply to the spec.
+                          Keys can include: 'model', 'features', 'splits', etc.
+            link_to_config: Whether to link run results back to the config
+
+        Returns:
+            Dict with run results including run_id, metrics, and artifacts
+        """
+        import json
+
+        # Get experiment spec from config
+        spec_result = self.config_to_experiment_spec(config_id, config_type)
+        if isinstance(spec_result, str):
+            spec_result = json.loads(spec_result)
+
+        if 'error' in spec_result:
+            return encode_tool_output(spec_result)
+
+        experiment_spec = spec_result.get('experiment_spec')
+        if not experiment_spec:
+            return encode_tool_output({'error': 'Failed to convert config to experiment spec'})
+
+        # Apply modifications if provided
+        if modifications:
+            for key, value in modifications.items():
+                if key in experiment_spec:
+                    if isinstance(value, dict) and isinstance(experiment_spec[key], dict):
+                        experiment_spec[key].update(value)
+                    else:
+                        experiment_spec[key] = value
+                else:
+                    experiment_spec[key] = value
+
+        # Run experiment using experiment_runner
+        from nba_app.agents.tools.experiment_runner import ExperimentRunner
+
+        experiment_runner = ExperimentRunner(db=self.db)
+        # Use a default session_id for config-based runs
+        session_id = f"config_run_{config_id[:8]}"
+
+        try:
+            result = experiment_runner.run_experiment(experiment_spec, session_id)
+
+            # Link results back to config if requested
+            if link_to_config and result.get('run_id'):
+                from nba_app.core.services.config_manager import ModelConfigManager
+                config_manager = ModelConfigManager(self.db)
+
+                config_manager.link_run_to_config(
+                    config_id=config_id,
+                    run_id=result['run_id'],
+                    config_type=config_type,
+                    metrics=result.get('metrics'),
+                    artifacts=result.get('artifacts'),
+                    dataset_id=result.get('dataset_id'),
+                    training_csv=result.get('artifacts', {}).get('dataset_path')
+                )
+                result['linked_to_config'] = config_id
+
+            return encode_tool_output(result)
+
+        except Exception as e:
+            return encode_tool_output({
+                'error': f"Experiment failed: {str(e)}",
+                'config_id': config_id
+            })
 

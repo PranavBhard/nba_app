@@ -1,0 +1,152 @@
+{
+  "1": {
+    "abbreviation": "ATL",
+    "name": "Atlanta Hawks",
+    "slug": "atlanta-hawks"
+  },
+  "2": {
+    "abbreviation": "BOS",
+    "name": "Boston Celtics",
+    "slug": "boston-celtics"
+  },
+  "17": {
+    "abbreviation": "BKN",
+    "name": "Brooklyn Nets",
+    "slug": "brooklyn-nets"
+  },
+  "30": {
+    "abbreviation": "CHA",
+    "name": "Charlotte Hornets",
+    "slug": "charlotte-hornets"
+  },
+  "4": {
+    "abbreviation": "CHI",
+    "name": "Chicago Bulls",
+    "slug": "chicago-bulls"
+  },
+  "5": {
+    "abbreviation": "CLE",
+    "name": "Cleveland Cavaliers",
+    "slug": "cleveland-cavaliers"
+  },
+  "6": {
+    "abbreviation": "DAL",
+    "name": "Dallas Mavericks",
+    "slug": "dallas-mavericks"
+  },
+  "7": {
+    "abbreviation": "DEN",
+    "name": "Denver Nuggets",
+    "slug": "denver-nuggets"
+  },
+  "8": {
+    "abbreviation": "DET",
+    "name": "Detroit Pistons",
+    "slug": "detroit-pistons"
+  },
+  "9": {
+    "abbreviation": "GS",
+    "name": "Golden State Warriors",
+    "slug": "golden-state-warriors"
+  },
+  "10": {
+    "abbreviation": "HOU",
+    "name": "Houston Rockets",
+    "slug": "houston-rockets"
+  },
+  "11": {
+    "abbreviation": "IND",
+    "name": "Indiana Pacers",
+    "slug": "indiana-pacers"
+  },
+  "12": {
+    "abbreviation": "LAC",
+    "name": "LA Clippers",
+    "slug": "la-clippers"
+  },
+  "13": {
+    "abbreviation": "LAL",
+    "name": "Los Angeles Lakers",
+    "slug": "los-angeles-lakers"
+  },
+  "29": {
+    "abbreviation": "MEM",
+    "name": "Memphis Grizzlies",
+    "slug": "memphis-grizzlies"
+  },
+  "14": {
+    "abbreviation": "MIA",
+    "name": "Miami Heat",
+    "slug": "miami-heat"
+  },
+  "15": {
+    "abbreviation": "MIL",
+    "name": "Milwaukee Bucks",
+    "slug": "milwaukee-bucks"
+  },
+  "16": {
+    "abbreviation": "MIN",
+    "name": "Minnesota Timberwolves",
+    "slug": "minnesota-timberwolves"
+  },
+  "3": {
+    "abbreviation": "NO",
+    "name": "New Orleans Pelicans",
+    "slug": "new-orleans-pelicans"
+  },
+  "18": {
+    "abbreviation": "NY",
+    "name": "New York Knicks",
+    "slug": "new-york-knicks"
+  },
+  "25": {
+    "abbreviation": "OKC",
+    "name": "Oklahoma City Thunder",
+    "slug": "oklahoma-city-thunder"
+  },
+  "19": {
+    "abbreviation": "ORL",
+    "name": "Orlando Magic",
+    "slug": "orlando-magic"
+  },
+  "20": {
+    "abbreviation": "PHI",
+    "name": "Philadelphia 76ers",
+    "slug": "philadelphia-76ers"
+  },
+  "21": {
+    "abbreviation": "PHX",
+    "name": "Phoenix Suns",
+    "slug": "phoenix-suns"
+  },
+  "22": {
+    "abbreviation": "POR",
+    "name": "Portland Trail Blazers",
+    "slug": "portland-trail-blazers"
+  },
+  "23": {
+    "abbreviation": "SAC",
+    "name": "Sacramento Kings",
+    "slug": "sacramento-kings"
+  },
+  "24": {
+    "abbreviation": "SA",
+    "name": "San Antonio Spurs",
+    "slug": "san-antonio-spurs"
+  },
+  "28": {
+    "abbreviation": "TOR",
+    "name": "Toronto Raptors",
+    "slug": "toronto-raptors"
+  },
+  "26": {
+    "abbreviation": "UTAH",
+    "name": "Utah Jazz",
+    "slug": "utah-jazz"
+  },
+  "27": {
+    "abbreviation": "WSH",
+    "name": "Washington Wizards",
+    "slug": "washington-wizards"
+  }
+}

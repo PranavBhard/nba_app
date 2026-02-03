@@ -13,18 +13,19 @@ parent_dir = os.path.dirname(os.path.dirname(os.path.dirname(script_dir)))
 if parent_dir not in sys.path:
     sys.path.insert(0, parent_dir)
 
-from nba_app.cli.Mongo import Mongo
+from nba_app.core.mongo import Mongo
 
 
-def get_player_stat(game_id: str, player_id: str, db=None) -> Dict:
+def get_player_stat(game_id: str, player_id: str, db=None, player_stats_collection: str = 'stats_nba_players') -> Dict:
     """
     Get player statistics for a specific game.
-    
+
     Args:
         game_id: Game ID (ESPN game identifier)
         player_id: Player ID (ESPN player identifier)
         db: Optional MongoDB database instance
-        
+        player_stats_collection: Name of the player stats collection (default: 'stats_nba_players')
+
     Returns:
         Dict with player game statistics including:
         - player_id: Player ID
@@ -39,8 +40,8 @@ def get_player_stat(game_id: str, player_id: str, db=None) -> Dict:
     """
     if db is None:
         db = Mongo().db
-    
-    player_game = db.stats_nba_players.find_one({
+
+    player_game = db[player_stats_collection].find_one({
         'game_id': game_id,
         'player_id': player_id
     })
@@ -65,15 +66,16 @@ def get_player_stat(game_id: str, player_id: str, db=None) -> Dict:
     return result
 
 
-def get_player_season_stats(season: str, player_id: str, db=None) -> Dict:
+def get_player_season_stats(season: str, player_id: str, db=None, player_stats_collection: str = 'stats_nba_players') -> Dict:
     """
     Get season averages for a player.
-    
+
     Args:
         season: Season string (YYYY-YYYY format, e.g., '2024-2025')
         player_id: Player ID (ESPN player identifier)
         db: Optional MongoDB database instance
-        
+        player_stats_collection: Name of the player stats collection (default: 'stats_nba_players')
+
     Returns:
         Dict with season statistics including:
         - player_id: Player ID
@@ -84,9 +86,9 @@ def get_player_season_stats(season: str, player_id: str, db=None) -> Dict:
     """
     if db is None:
         db = Mongo().db
-    
+
     # Get all games for this player in this season
-    games = list(db.stats_nba_players.find({
+    games = list(db[player_stats_collection].find({
         'season': season,
         'player_id': player_id,
         'stats.min': {'$gt': 0}  # Only games where player played
@@ -146,15 +148,16 @@ def get_player_season_stats(season: str, player_id: str, db=None) -> Dict:
     return result
 
 
-def get_player_last_stats(N: int, player_id: str, db=None) -> List[Dict]:
+def get_player_last_stats(N: int, player_id: str, db=None, player_stats_collection: str = 'stats_nba_players') -> List[Dict]:
     """
     Get the last N games for a player.
-    
+
     Args:
         N: Number of previous games to retrieve
         player_id: Player ID (ESPN player identifier)
         db: Optional MongoDB database instance
-        
+        player_stats_collection: Name of the player stats collection (default: 'stats_nba_players')
+
     Returns:
         List of dicts, each containing game statistics for one game.
         Games are sorted by date descending (most recent first).
@@ -171,9 +174,9 @@ def get_player_last_stats(N: int, player_id: str, db=None) -> List[Dict]:
     """
     if db is None:
         db = Mongo().db
-    
+
     # Get last N games for this player (sorted by date descending)
-    games = list(db.stats_nba_players.find({
+    games = list(db[player_stats_collection].find({
         'player_id': player_id,
         'stats.min': {'$gt': 0}  # Only games where player played
     }).sort('date', -1).limit(N))
@@ -201,33 +204,34 @@ def get_player_last_stats(N: int, player_id: str, db=None) -> List[Dict]:
     return results
 
 
-def get_player_games_in_season(season: str, player_id: str, team: str = None, db=None) -> List[str]:
+def get_player_games_in_season(season: str, player_id: str, team: str = None, db=None, player_stats_collection: str = 'stats_nba_players') -> List[str]:
     """
     Get list of game IDs where a player played (stats.min > 0) in a season.
-    
+
     Args:
         season: Season string (YYYY-YYYY format, e.g., '2024-2025')
         player_id: Player ID (ESPN player identifier)
         team: Optional team abbreviation (e.g., 'LAL', 'BOS'). If provided, filters to games for that team.
         db: Optional MongoDB database instance
-        
+        player_stats_collection: Name of the player stats collection (default: 'stats_nba_players')
+
     Returns:
         List of game IDs (strings) where the player played, sorted by date ascending (oldest first)
     """
     if db is None:
         db = Mongo().db
-    
+
     query = {
         'season': season,
         'player_id': player_id,
         'stats.min': {'$gt': 0}  # Only games where player played
     }
-    
+
     if team:
         query['team'] = team
-    
+
     # Get games and sort by date ascending
-    games = list(db.stats_nba_players.find(
+    games = list(db[player_stats_collection].find(
         query,
         {'game_id': 1, 'date': 1}
     ).sort('date', 1))

@@ -2,16 +2,30 @@
 Core infrastructure for unified model management across web app, CLI, and agent tooling.
 """
 
-from .config_manager import ModelConfigManager
-from .model_factory import ModelFactory
-from .feature_manager import FeatureManager
-from .business_logic import ModelBusinessLogic
-from .artifacts import ArtifactManager
+from .services.config_manager import ModelConfigManager
+from .models.factory import ModelFactory
+from .features.manager import FeatureManager
+from .services.business_logic import ModelBusinessLogic
+from .services.artifacts import ArtifactManager
+from .features.registry import FeatureRegistry, FeatureGroups, StatCategory
+from .features.generator import SharedFeatureGenerator, collect_unique_features
+from .models.ensemble import EnsemblePredictor, create_ensemble_predictor
+from .services.prediction import PredictionService, PredictionResult, MatchupInfo
 
 __all__ = [
     'ModelConfigManager',
-    'ModelFactory', 
+    'ModelFactory',
     'FeatureManager',
     'ModelBusinessLogic',
-    'ArtifactManager'
+    'ArtifactManager',
+    'FeatureRegistry',
+    'FeatureGroups',
+    'StatCategory',
+    'SharedFeatureGenerator',
+    'collect_unique_features',
+    'EnsemblePredictor',
+    'create_ensemble_predictor',
+    'PredictionService',
+    'PredictionResult',
+    'MatchupInfo',
 ]

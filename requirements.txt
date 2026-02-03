@@ -6,10 +6,13 @@ scikit-learn>=1.0.0
 flask>=2.0.0
 requests>=2.25.0
 pytz>=2021.1
+pyyaml>=6.0
 geopy>=2.2.0
 beautifulsoup4>=4.9.0
 lxml>=4.6.0
 python-dateutil>=2.8.0
+trafilatura>=1.6.0
+readability-lxml>=0.8.1
 
 # Optional ML libraries (uncomment if needed)
 # Note: These are optional - the code handles their absence gracefully

@@ -54,13 +54,15 @@
                             </div>
                             <div class="feature-list" id="features-{{ set_name }}" style="display: none;">
                                 {% for feature in set_features %}
-                                <label class="feature-item">
-                                    <input type="checkbox" 
-                                           name="features" 
-                                           value="{{ feature }}" 
+                                <label class="feature-item{% if feature not in available_features %} feature-unavailable{% endif %}">
+                                    <input type="checkbox"
+                                           name="features"
+                                           value="{{ feature }}"
                                            class="feature-checkbox"
-                                           data-set="{{ set_name }}">
+                                           data-set="{{ set_name }}"
+                                           {% if feature not in available_features %}disabled title="Not available in training data"{% endif %}>
                                     <span class="feature-name">{{ feature }}</span>
+                                    {% if feature not in available_features %}<span class="feature-unavailable-badge" title="Not in MASTER_TRAINING.csv">⚠</span>{% endif %}
                                 </label>
                                 {% endfor %}
                             </div>
@@ -229,7 +231,15 @@
                         <option value="sigmoid">Sigmoid</option>
                     </select>
                 </div>
-                
+
+                <div class="filter-group">
+                    <label for="filter-time-config">Time Config:</label>
+                    <select id="filter-time-config" onchange="applyFiltersAndSort()">
+                        <option value="">All</option>
+                        <!-- Populated dynamically from configs -->
+                    </select>
+                </div>
+
                 <div class="filter-group">
                     <label for="filter-selected">Status:</label>
                     <select id="filter-selected" onchange="applyFiltersAndSort()">
@@ -265,6 +275,13 @@
                     </select>
                 </div>
                 
+                <div class="filter-group">
+                    <label style="display: flex; align-items: center; cursor: pointer; gap: 6px;">
+                        <input type="checkbox" id="show-ensembles-toggle" onchange="applyFiltersAndSort()">
+                        <span>Show Ensembles</span>
+                    </label>
+                </div>
+
                 <div class="filter-group">
                     <button type="button" id="reset-filters-btn" class="btn btn-small" onclick="resetFiltersAndSort()">Reset</button>
                 </div>
@@ -593,6 +610,32 @@
     font-size: 0.85em;
 }
 
+/* Unavailable features (not in MASTER_TRAINING.csv) */
+.feature-unavailable {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.feature-unavailable:hover {
+    background: transparent;
+}
+
+.feature-unavailable .feature-checkbox {
+    cursor: not-allowed;
+}
+
+.feature-unavailable .feature-name {
+    color: #999;
+    text-decoration: line-through;
+}
+
+.feature-unavailable-badge {
+    margin-left: 6px;
+    color: #d9534f;
+    font-size: 0.9em;
+    cursor: help;
+}
+
 .toggle-switch {
     position: relative;
     display: inline-block;
@@ -716,6 +759,38 @@
 .btn-danger:hover {
     background: #c0392b;
     border-color: #c0392b;
+}
+
+.config-copy-btn {
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 4px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: #667eea;
+    transition: all 0.2s;
+    border-radius: 4px;
+    vertical-align: middle;
+}
+
+.config-copy-btn:hover {
+    background: rgba(102, 126, 234, 0.1);
+}
+
+.config-copy-btn.copied {
+    color: #28a745;
+}
+
+.config-copy-btn.copied svg {
+    animation: copyPulse 0.3s ease;
+}
+
+@keyframes copyPulse {
+    0% { transform: scale(1); }
+    50% { transform: scale(1.2); }
+    100% { transform: scale(1); }
 }
 
 .results-panel {
@@ -1054,6 +1129,252 @@
     margin-left: 8px;
 }
 
+/* Embedded Base Model Panels (inside ensemble expanded history item) */
+.embedded-base-models-section {
+    margin-top: 15px;
+}
+
+.embedded-base-model-card {
+    background: white;
+    border: 1px solid #e3e6ef;
+    border-radius: 8px;
+    padding: 12px;
+    margin-top: 10px;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+}
+
+.embedded-base-model-header {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    align-items: center;
+    flex-wrap: wrap;
+    margin-bottom: 10px;
+}
+
+.embedded-base-model-title {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+}
+
+.embedded-base-model-title .name {
+    font-weight: 700;
+    color: #333;
+}
+
+.embedded-base-model-title .sub {
+    font-size: 0.85em;
+    color: #666;
+    font-family: 'Courier New', monospace;
+}
+
+.embedded-panels-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 10px;
+}
+
+.embedded-panel {
+    background: #fafbff;
+    border: 1px solid #e8ecff;
+    border-radius: 8px;
+    padding: 10px;
+}
+
+.embedded-panel h6 {
+    margin: 0 0 8px 0;
+    font-size: 0.9em;
+    color: #667eea;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+}
+
+.embedded-subsection-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 8px;
+}
+
+.embedded-subsection-toggle {
+    border: none;
+    background: none;
+    cursor: pointer;
+    padding: 4px 8px;
+    border-radius: 6px;
+    color: #667eea;
+    font-weight: 800;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.embedded-subsection-toggle:hover {
+    background: rgba(102, 126, 234, 0.10);
+}
+
+.embedded-subsection-toggle .chev {
+    display: inline-block;
+    transition: transform 0.2s ease;
+    font-size: 0.85em;
+    line-height: 1;
+}
+
+.embedded-subsection-toggle.expanded .chev {
+    transform: rotate(180deg);
+}
+
+.embedded-subsection-content {
+    display: none;
+}
+
+.embedded-metrics-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(140px, 1fr));
+    gap: 10px;
+    margin-top: 10px;
+}
+
+.embedded-metric-card {
+    background: white;
+    border: 1px solid #e8e8e8;
+    border-radius: 10px;
+    padding: 12px;
+    border-left: 5px solid #667eea;
+}
+
+.embedded-metric-label {
+    font-size: 0.78em;
+    color: #666;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+}
+
+.embedded-metric-value {
+    font-size: 1.6em;
+    font-weight: 800;
+    color: #333;
+    margin-top: 6px;
+    line-height: 1.1;
+}
+
+.embedded-metric-sub {
+    font-size: 0.85em;
+    color: #777;
+    margin-top: 6px;
+}
+
+.embedded-kv {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 8px;
+    font-size: 0.9em;
+    color: #444;
+}
+
+.embedded-kv .k {
+    color: #666;
+    font-weight: 600;
+    margin-right: 6px;
+}
+
+.embedded-feature-sets {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.embedded-feature-set-item {
+    background: white;
+    border: 1px solid #e6e6e6;
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+.embedded-feature-set-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    background: linear-gradient(to right, #f8f9fa 0%, #ffffff 100%);
+}
+
+.embedded-feature-set-header input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+    accent-color: #667eea;
+}
+
+.embedded-feature-set-header .label {
+    flex: 1;
+    font-weight: 700;
+    color: #333;
+    font-size: 0.92em;
+}
+
+.embedded-feature-set-header .count {
+    font-size: 0.82em;
+    color: #667eea;
+    font-weight: 700;
+    background: #e8f0fe;
+    padding: 3px 10px;
+    border-radius: 12px;
+    white-space: nowrap;
+}
+
+.embedded-feature-set-header .toggle {
+    border: none;
+    background: none;
+    cursor: pointer;
+    padding: 4px 6px;
+    border-radius: 6px;
+    color: #666;
+}
+
+.embedded-feature-set-header .toggle:hover {
+    background: #f0f4ff;
+    color: #667eea;
+}
+
+.embedded-feature-set-header .toggle.expanded {
+    transform: rotate(180deg);
+    color: #667eea;
+}
+
+.embedded-feature-list {
+    display: none;
+    padding: 10px 12px 12px 40px;
+    background: #fafafa;
+    border-top: 1px solid #eee;
+    max-height: 250px;
+    overflow: auto;
+    font-family: 'Courier New', monospace;
+    font-size: 0.85em;
+    color: #444;
+    line-height: 1.4;
+}
+
+.embedded-feature-pill {
+    display: inline-block;
+    margin: 3px 6px 0 0;
+    padding: 3px 8px;
+    border: 1px solid #e6e6e6;
+    border-radius: 999px;
+    background: white;
+}
+
+.embedded-missing {
+    padding: 10px 12px;
+    background: #fff3cd;
+    border: 1px solid #ffc107;
+    border-radius: 8px;
+    color: #856404;
+    font-size: 0.9em;
+}
+
 .pagination {
     display: flex;
     justify-content: center;
@@ -1093,7 +1414,15 @@
 </style>
 
 <script>
+const currentLeague = '{{ league_id }}';
+
+// Centralized API URL helper - always includes league prefix
+function apiUrl(path) {
+    return `/${currentLeague}${path}`;
+}
+
 let currentConfig = null;
+let embeddedFeatureSetDefs = null;
 
 document.addEventListener('DOMContentLoaded', function() {
     // Event listeners
@@ -1129,6 +1458,9 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // Initialize feature count
     updateFeatureCount();
+
+    // Cache feature set definitions from the main form so we can render embedded base-model panels (kept for backward compat)
+    embeddedFeatureSetDefs = buildEmbeddedFeatureSetDefs();
     
     // Feature set expansion handlers
     document.querySelectorAll('.expand-btn').forEach(btn => {
@@ -1235,21 +1567,230 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 });
 
+function escapeHtml(input) {
+    const s = String(input ?? '');
+    return s
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#39;');
+}
+
+function safeId(input) {
+    return String(input ?? '')
+        .toLowerCase()
+        .replace(/[^a-z0-9_-]/g, '_')
+        .replace(/_+/g, '_');
+}
+
+function buildEmbeddedFeatureSetDefs() {
+    // Read the feature set definitions directly from the DOM (rendered by Jinja),
+    // so we don’t duplicate the feature set data structure in JS.
+    const defs = [];
+    const setItems = document.querySelectorAll('#model-config-form .feature-set-item');
+    setItems.forEach(item => {
+        const setCb = item.querySelector('.feature-set-checkbox');
+        if (!setCb) return;
+        const setName = setCb.value;
+        const featureCbs = item.querySelectorAll(`.feature-checkbox[data-set="${CSS.escape(setName)}"]`);
+        const features = Array.from(featureCbs).map(cb => cb.value);
+        defs.push({ setName, features });
+    });
+    return defs;
+}
+
+function toggleEmbeddedFeatureSet(btnEl) {
+    try {
+        const header = btnEl.closest('.embedded-feature-set-header');
+        const item = btnEl.closest('.embedded-feature-set-item');
+        const list = item ? item.querySelector('.embedded-feature-list') : null;
+        if (!list) return;
+        const isExpanded = window.getComputedStyle(list).display !== 'none';
+        list.style.display = isExpanded ? 'none' : 'block';
+        btnEl.classList.toggle('expanded', !isExpanded);
+    } catch (e) {
+        console.error('toggleEmbeddedFeatureSet failed:', e);
+    }
+}
+
+function toggleEmbeddedSubsection(btnEl, contentId) {
+    try {
+        const content = document.getElementById(contentId);
+        if (!content) return;
+        const isExpanded = window.getComputedStyle(content).display !== 'none';
+        content.style.display = isExpanded ? 'none' : 'block';
+        btnEl.classList.toggle('expanded', !isExpanded);
+    } catch (e) {
+        console.error('toggleEmbeddedSubsection failed:', e);
+    }
+}
+
+function renderTimeCalibrationBlock(cfg, titleText) {
+    const enabled = cfg && cfg.use_time_calibration;
+    const calMethod = cfg && cfg.calibration_method ? cfg.calibration_method : null;
+    const beginYear = cfg && cfg.begin_year ? cfg.begin_year : null;
+    const calYears = cfg ? (cfg.calibration_years || cfg.calibration_year) : null;
+    const evalYear = cfg && cfg.evaluation_year ? cfg.evaluation_year : null;
+
+    return `
+        <div class="embedded-panel">
+            <h6>${escapeHtml(titleText)}</h6>
+            <div class="embedded-kv">
+                <div><span class="k">Enabled:</span> ${enabled ? 'Yes' : 'No'}</div>
+                ${enabled ? `
+                    <div><span class="k">Method:</span> ${escapeHtml(calMethod || 'N/A')}</div>
+                    <div><span class="k">Begin Year:</span> ${escapeHtml(beginYear || 'N/A')}</div>
+                    <div><span class="k">Calibration Years:</span> ${escapeHtml(Array.isArray(calYears) ? calYears.join(', ') : (calYears || 'N/A'))}</div>
+                    <div><span class="k">Evaluation Year:</span> ${escapeHtml(evalYear || 'N/A')}</div>
+                ` : ''}
+            </div>
+        </div>
+    `;
+}
+
+function renderRankedFeaturesPanel(base, title, arr) {
+    if (!arr || !Array.isArray(arr) || arr.length === 0) {
+        return `
+            <div class="embedded-panel">
+                <div class="embedded-subsection-header">
+                    <h6 style="margin:0;">${escapeHtml(title)}</h6>
+                </div>
+                <div style="color:#999; font-size:0.9em;">No ranked features saved for this model.</div>
+            </div>
+        `;
+    }
+
+    // Show all by default, but keep scroll bounded.
+    const items = arr.map((f) => {
+        const rank = f && f.rank ? f.rank : 0;
+        const name = f && f.name ? f.name : 'Unknown';
+        const score = (f && f.score !== null && f.score !== undefined)
+            ? (typeof f.score === 'number' ? f.score.toFixed(4) : String(f.score))
+            : null;
+        return `
+            <div class="rated-feature-item">
+                <span class="feature-rank">${escapeHtml(rank)}.</span>
+                <span class="feature-name">${escapeHtml(name)}</span>
+                ${score !== null ? `<span class="feature-score">(${escapeHtml(score)})</span>` : ''}
+            </div>
+        `;
+    }).join('');
+
+    const contentId = `emb_rank_${safeId(base && base._id ? base._id : 'base')}_${safeId(title)}`;
+
+    return `
+        <div class="embedded-panel">
+            <div class="embedded-subsection-header">
+                <h6 style="margin:0;">${escapeHtml(title)} (${arr.length})</h6>
+                <button type="button" class="embedded-subsection-toggle" onclick="event.stopPropagation(); toggleEmbeddedSubsection(this, '${contentId}')" aria-label="Expand">
+                    <span>Show</span> <span class="chev">▼</span>
+                </button>
+            </div>
+            <div class="embedded-subsection-content" id="${contentId}">
+                <div class="rated-features-list" style="max-height: 320px;">
+                    ${items}
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+function renderEmbeddedBaseModelPanels(ensembleConfig) {
+    const ids = (ensembleConfig && Array.isArray(ensembleConfig.ensemble_models)) ? ensembleConfig.ensemble_models : [];
+    if (ids.length === 0) return '';
+
+    const cards = ids.map((baseId, idx) => {
+        const base = allHistoryConfigs.find(c => c && c._id === baseId) || null;
+        if (!base) {
+            return `<div class="embedded-missing">Base model not found for id: <span style="font-family: monospace;">${escapeHtml(baseId)}</span> (it may have been deleted)</div>`;
+        }
+
+        const name = base.name || 'Base Model';
+        const modelType = base.model_type || 'Unknown';
+        const trainedAt = base.trained_at ? (() => { try { return new Date(base.trained_at).toLocaleString(); } catch { return 'Unknown'; } })() : 'Unknown';
+        const acc = (base.accuracy !== null && base.accuracy !== undefined && typeof base.accuracy === 'number') ? base.accuracy.toFixed(2) + '%' : (base.accuracy ?? 'N/A');
+        const logLoss = (base.log_loss !== null && base.log_loss !== undefined && typeof base.log_loss === 'number') ? base.log_loss.toFixed(4) : (base.log_loss ?? 'N/A');
+        const brier = (base.brier_score !== null && base.brier_score !== undefined && typeof base.brier_score === 'number') ? base.brier_score.toFixed(4) : (base.brier_score ?? 'N/A');
+
+        const kv = `
+            <div class="embedded-kv">
+                <div><span class="k">Model:</span> ${escapeHtml(modelType)}</div>
+                <div><span class="k">Trained:</span> ${escapeHtml(trainedAt)}</div>
+                ${base.best_c_value !== null && base.best_c_value !== undefined ? `<div><span class="k">Best C:</span> ${escapeHtml(base.best_c_value)}</div>` : ''}
+                ${base.min_games_played !== null && base.min_games_played !== undefined ? `<div><span class="k">Min Games Played:</span> ${escapeHtml(base.min_games_played)}</div>` : ''}
+                ${typeof base.use_master !== 'undefined' ? `<div><span class="k">Use Master CSV:</span> ${base.use_master ? 'Yes' : 'No'}</div>` : ''}
+            </div>
+        `;
+
+        return `
+            <div class="embedded-base-model-card">
+                <div class="embedded-base-model-header">
+                    <div class="embedded-base-model-title">
+                        <div class="name">${escapeHtml(name)}</div>
+                        <div class="sub">${escapeHtml(modelType)} • ${escapeHtml(base._id)}</div>
+                    </div>
+                    <div style="display:flex; gap:8px; align-items:center;">
+                        <button type="button" class="btn btn-small" onclick="event.stopPropagation(); loadConfigIntoForm('${escapeHtml(base._id)}')">Load into editor</button>
+                        ${!base.selected ? `<button type="button" class="btn btn-small" onclick="event.stopPropagation(); selectConfig('${escapeHtml(base._id)}')">Select</button>` : `<span class="selected-badge">SELECTED</span>`}
+                    </div>
+                </div>
+                <div class="embedded-panels-grid">
+                    <div class="embedded-panel">
+                        <h6>Overview</h6>
+                        ${kv}
+                        <div class="embedded-metrics-grid">
+                            <div class="embedded-metric-card">
+                                <div class="embedded-metric-label">Accuracy</div>
+                                <div class="embedded-metric-value">${escapeHtml(acc)}</div>
+                                <div class="embedded-metric-sub">Cross-val mean</div>
+                            </div>
+                            <div class="embedded-metric-card">
+                                <div class="embedded-metric-label">Log Loss</div>
+                                <div class="embedded-metric-value">${escapeHtml(logLoss)}</div>
+                                <div class="embedded-metric-sub">Lower is better</div>
+                            </div>
+                            <div class="embedded-metric-card">
+                                <div class="embedded-metric-label">Brier</div>
+                                <div class="embedded-metric-value">${escapeHtml(brier)}</div>
+                                <div class="embedded-metric-sub">Lower is better</div>
+                            </div>
+                        </div>
+                    </div>
+                    ${renderRankedFeaturesPanel(base, 'Rated Features (F-Score)', base.features_ranked)}
+                    ${renderRankedFeaturesPanel(base, 'Rated Features (Importance)', base.features_ranked_by_importance)}
+                </div>
+            </div>
+        `;
+    }).join('');
+
+    return `
+        <div class="embedded-base-models-section">
+            <h5>Base Models (${ids.length})</h5>
+            ${cards}
+        </div>
+    `;
+}
+
 
 function getFormData() {
     const form = document.getElementById('model-config-form');
     const formData = new FormData(form);
-    
+
     // Check if currently selected config is an ensemble
     const selectedConfig = getSelectedConfig();
     const isEnsemble = selectedConfig && selectedConfig.ensemble;
-    
+
+    // Get the selected config's _id if one is selected (to update existing config)
+    const selectedConfigId = selectedConfig ? selectedConfig._id : null;
+
     if (isEnsemble) {
         // Ensemble configuration - use selected model types as meta-model type
         const ensembleModelTypes = Array.from(form.querySelectorAll('input[name="model_types"]:checked')).map(cb => cb.value);
         const ensembleCValues = Array.from(form.querySelectorAll('input[name="c_values"]:checked')).map(cb => parseFloat(cb.value));
-        
+
         return {
+            config_id: selectedConfigId,  // Include selected config ID
             ensemble: true,
             model_types: ensembleModelTypes.length > 0 ? ensembleModelTypes : ['LogisticRegression'], // Meta-model type
             c_values: ensembleCValues.length > 0 ? ensembleCValues : [0.1], // Meta-model C-value
@@ -1266,7 +1807,7 @@ function getFormData() {
             min_games_played: selectedConfig.min_games_played || 15
         };
     }
-    
+
     // Regular model configuration
     // Get calibration settings
     const useMaster = document.getElementById('use-master')?.checked || false;
@@ -1276,14 +1817,15 @@ function getFormData() {
     const calibrationYearsStr = document.getElementById('calibration-years')?.value || '';
     const calibrationYears = calibrationYearsStr ? calibrationYearsStr.split(',').map(y => parseInt(y.trim())).filter(y => !isNaN(y)) : null;
     const evaluationYear = document.getElementById('evaluation-year')?.value ? parseInt(document.getElementById('evaluation-year').value) : null;
-    
+
     // Get injury feature settings
     const includeInjuries = document.getElementById('include-injuries')?.checked || false;
     const recencyDecayK = parseFloat(document.getElementById('recency-decay-k')?.value || '15.0');
     // Min games played
     const minGamesPlayed = parseInt(document.getElementById('min-games-played')?.value || '15');
-    
+
     return {
+        config_id: selectedConfigId,  // Include selected config ID to update existing config
         use_master: useMaster,
         model_types: Array.from(form.querySelectorAll('input[name="model_types"]:checked')).map(cb => cb.value),
         feature_sets: Array.from(form.querySelectorAll('input[name="feature_sets"]:checked')).map(cb => cb.value),
@@ -1301,10 +1843,18 @@ function getFormData() {
 function setFormData(config) {
     // Check if this is an ensemble config
     const isEnsemble = config.ensemble === true;
-    
+
+    // Normalize model_type(s): stored configs have singular model_type, form uses model_types array
+    let modelTypesToCheck = [];
+    if (config.model_types && Array.isArray(config.model_types)) {
+        modelTypesToCheck = config.model_types;
+    } else if (config.model_type) {
+        modelTypesToCheck = [config.model_type];
+    }
+
     // Set model types (for ensembles, this is the meta-model type)
     document.querySelectorAll('input[name="model_types"]').forEach(cb => {
-        cb.checked = config.model_types && config.model_types.includes(cb.value);
+        cb.checked = modelTypesToCheck.includes(cb.value);
     });
     
     if (isEnsemble) {
@@ -1329,7 +1879,7 @@ function setFormData(config) {
             missingFeaturesSection.style.display = 'none';
         }
         
-        console.log(`setFormData: Loaded ensemble config with meta-model type: ${config.model_types}`);
+        console.log(`setFormData: Loaded ensemble config with meta-model type: ${modelTypesToCheck}`);
     } else {
         // Regular model configuration - enable feature controls
         document.querySelectorAll('input[name="feature_sets"]').forEach(cb => {
@@ -1398,12 +1948,20 @@ function setFormData(config) {
             }
         }
         
-        console.log(`setFormData: Loaded regular model config with ${config.model_types.length} model types`);
+        console.log(`setFormData: Loaded regular model config with ${modelTypesToCheck.length} model types`);
     }
-    
+
+    // Normalize c_values: stored configs have singular best_c_value, form uses c_values array
+    let cValuesToCheck = [];
+    if (config.c_values && Array.isArray(config.c_values)) {
+        cValuesToCheck = config.c_values.map(v => parseFloat(v));
+    } else if (config.best_c_value !== null && config.best_c_value !== undefined) {
+        cValuesToCheck = [parseFloat(config.best_c_value)];
+    }
+
     // Set C-values
     document.querySelectorAll('input[name="c_values"]').forEach(cb => {
-        cb.checked = config.c_values && config.c_values.includes(parseFloat(cb.value));
+        cb.checked = cValuesToCheck.includes(parseFloat(cb.value));
     });
     
     // Set calibration settings
@@ -1594,7 +2152,7 @@ async function saveConfig() {
     const config = getFormData();
     
     try {
-        const response = await fetch('/api/model-config/save', {
+        const response = await fetch(apiUrl('/api/model-config/save'), {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify(config)
@@ -1616,7 +2174,7 @@ async function saveConfig() {
 
 async function loadLastConfig() {
     try {
-        const response = await fetch('/api/model-config/load');
+        const response = await fetch(apiUrl('/api/model-config/load'));
         const data = await response.json();
         
         if (data.success && data.config) {
@@ -1713,7 +2271,7 @@ async function runConfig() {
     console.log(`Starting ${isEnsemble ? 'ensemble' : 'regular'} training job...`);
     
     try {
-        const response = await fetch('/api/model-config/train', {
+        const response = await fetch(apiUrl('/api/model-config/train'), {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify(config)
@@ -1785,7 +2343,7 @@ function startJobPolling(jobId) {
 
 async function pollJobStatus(jobId) {
     try {
-        const response = await fetch(`/api/jobs/${jobId}`);
+        const response = await fetch(apiUrl(`/api/jobs/${jobId}`));
         
         if (!response.ok) {
             console.error(`Failed to fetch job status: ${response.status}`);
@@ -1875,7 +2433,7 @@ async function loadHistory() {
     
     try {
         console.log('Loading history from /api/model-configs...');
-        const response = await fetch('/api/model-configs');
+        const response = await fetch(apiUrl('/api/model-configs'));
         
         if (!response.ok) {
             throw new Error(`HTTP error! status: ${response.status}`);
@@ -1888,13 +2446,16 @@ async function loadHistory() {
             allHistoryConfigs = data.configs;
             console.log(`Loaded ${allHistoryConfigs.length} configs`);
             console.log('First config sample:', allHistoryConfigs[0]);
-            
+
+            // Populate time config filter options
+            populateTimeConfigFilter();
+
             // Verify historyList element is accessible
             if (!historyList) {
                 console.error('historyList element is null after fetch!');
                 return;
             }
-            
+
             // Apply filters and sorting, then display
             applyFiltersAndSort();
             
@@ -1924,53 +2485,112 @@ async function loadHistory() {
     }
 }
 
+// Build a time config key from a config's time-based settings
+function getTimeConfigKey(config) {
+    if (!config.use_time_calibration) return null;
+    const method = config.calibration_method || 'N/A';
+    const beginYear = config.begin_year || 'N/A';
+    const calYears = Array.isArray(config.calibration_years)
+        ? config.calibration_years.join(',')
+        : (config.calibration_years || config.calibration_year || 'N/A');
+    const evalYear = config.evaluation_year || 'N/A';
+    return `${method}|${beginYear}|${calYears}|${evalYear}`;
+}
+
+// Format a time config key for display
+function formatTimeConfigLabel(key) {
+    const [method, beginYear, calYears, evalYear] = key.split('|');
+    return `${method} | Train:${beginYear} | Cal:${calYears} | Eval:${evalYear}`;
+}
+
+// Populate the time config filter dropdown with unique combinations
+function populateTimeConfigFilter() {
+    const select = document.getElementById('filter-time-config');
+    if (!select) return;
+
+    // Collect unique time config combinations
+    const timeConfigs = new Set();
+    for (const config of allHistoryConfigs) {
+        const key = getTimeConfigKey(config);
+        if (key) timeConfigs.add(key);
+    }
+
+    // Sort and build options
+    const sortedKeys = Array.from(timeConfigs).sort();
+
+    // Clear existing options except "All"
+    select.innerHTML = '<option value="">All</option>';
+
+    for (const key of sortedKeys) {
+        const option = document.createElement('option');
+        option.value = key;
+        option.textContent = formatTimeConfigLabel(key);
+        select.appendChild(option);
+    }
+}
+
 function applyFiltersAndSort() {
     // Reset to first page when filtering/sorting
     historyPage = 1;
-    
+
     // Get filter values
     const filterModelType = document.getElementById('filter-model-type')?.value || '';
     const filterCalibration = document.getElementById('filter-calibration')?.value || '';
     const filterCalibrationMethod = document.getElementById('filter-calibration-method')?.value || '';
+    const filterTimeConfig = document.getElementById('filter-time-config')?.value || '';
     const filterSelected = document.getElementById('filter-selected')?.value || '';
     const filterInjuries = document.getElementById('filter-injuries')?.value || '';
+    const showEnsembles = document.getElementById('show-ensembles-toggle')?.checked || false;
     const sortBy = document.getElementById('sort-by')?.value || 'trained_at_desc';
-    
-    // Always pin the currently selected config (if any) at the top
-    const pinnedSelected = allHistoryConfigs.find(cfg => cfg && cfg.selected === true) || null;
-    const rest = allHistoryConfigs.filter(cfg => !pinnedSelected || cfg._id !== pinnedSelected._id);
 
-    // Apply filters to the rest (selected stays visible regardless of filters)
-    let filteredRest = rest.filter(config => {
+    // Always pin the selected config at top regardless of sort option
+    const pinnedSelected = allHistoryConfigs.find(cfg => cfg && cfg.selected === true) || null;
+    const configsToFilter = allHistoryConfigs.filter(cfg => !pinnedSelected || cfg._id !== pinnedSelected._id);
+
+    // Apply filters
+    let filteredConfigs = configsToFilter.filter(config => {
+        // Ensemble filter - hide ensembles unless toggle is checked
+        if (!showEnsembles && config.ensemble === true) {
+            return false;
+        }
+
         // Model type filter
         if (filterModelType && config.model_type !== filterModelType) {
             return false;
         }
-        
+
         // Calibration filter
         if (filterCalibration) {
             const hasCalibration = config.use_time_calibration === true;
             if (filterCalibration === 'true' && !hasCalibration) return false;
             if (filterCalibration === 'false' && hasCalibration) return false;
         }
-        
+
         // Calibration method filter
         if (filterCalibrationMethod && config.calibration_method !== filterCalibrationMethod) {
             return false;
         }
-        
-        // Selected filter (applies only to rest; pinned selected remains regardless)
+
+        // Time config filter (matches exact combo of method, begin_year, cal_years, eval_year)
+        if (filterTimeConfig) {
+            const configTimeKey = getTimeConfigKey(config);
+            if (configTimeKey !== filterTimeConfig) {
+                return false;
+            }
+        }
+
+        // Selected filter
         if (filterSelected) {
             const isSelected = config.selected === true;
             if (filterSelected === 'true' && !isSelected) return false;
             if (filterSelected === 'false' && isSelected) return false;
         }
-        
+
         return true;
     });
-    
-    // Apply sorting to the rest
-    filteredRest.sort((a, b) => {
+
+    // Apply sorting
+    filteredConfigs.sort((a, b) => {
         // Handle selected_first sort
         if (sortBy === 'selected_first') {
             if (a.selected && !b.selected) return -1;
@@ -1980,50 +2600,50 @@ function applyFiltersAndSort() {
             const bDate = b.trained_at ? new Date(b.trained_at) : new Date(0);
             return bDate - aDate;
         }
-        
+
         // Date sorting
         if (sortBy === 'trained_at_desc' || sortBy === 'trained_at_asc') {
             const aDate = a.trained_at ? new Date(a.trained_at) : new Date(0);
             const bDate = b.trained_at ? new Date(b.trained_at) : new Date(0);
             return sortBy === 'trained_at_desc' ? bDate - aDate : aDate - bDate;
         }
-        
+
         // Accuracy sorting
         if (sortBy === 'accuracy_desc' || sortBy === 'accuracy_asc') {
             const aAcc = a.accuracy !== null && a.accuracy !== undefined ? parseFloat(a.accuracy) : -Infinity;
             const bAcc = b.accuracy !== null && b.accuracy !== undefined ? parseFloat(b.accuracy) : -Infinity;
             return sortBy === 'accuracy_desc' ? bAcc - aAcc : aAcc - bAcc;
         }
-        
+
         // Log loss sorting
         if (sortBy === 'log_loss_asc' || sortBy === 'log_loss_desc') {
             const aLL = a.log_loss !== null && a.log_loss !== undefined ? parseFloat(a.log_loss) : Infinity;
             const bLL = b.log_loss !== null && b.log_loss !== undefined ? parseFloat(b.log_loss) : Infinity;
             return sortBy === 'log_loss_asc' ? aLL - bLL : bLL - aLL;
         }
-        
+
         // Brier score sorting
         if (sortBy === 'brier_asc' || sortBy === 'brier_desc') {
             const aBrier = a.brier_score !== null && a.brier_score !== undefined ? parseFloat(a.brier_score) : Infinity;
             const bBrier = b.brier_score !== null && b.brier_score !== undefined ? parseFloat(b.brier_score) : Infinity;
             return sortBy === 'brier_asc' ? aBrier - bBrier : bBrier - aBrier;
         }
-        
+
         // Feature count sorting
         if (sortBy === 'feature_count_desc' || sortBy === 'feature_count_asc') {
             const aCount = a.feature_count || 0;
             const bCount = b.feature_count || 0;
             return sortBy === 'feature_count_desc' ? bCount - aCount : aCount - bCount;
         }
-        
+
         return 0;
     });
-    
-    // Combine pinned selected (if present) with the sorted, filtered rest
+
+    // Combine pinned selected (if present) with the sorted, filtered configs
     if (pinnedSelected) {
-        filteredAndSortedConfigs = [pinnedSelected, ...filteredRest];
+        filteredAndSortedConfigs = [pinnedSelected, ...filteredConfigs];
     } else {
-        filteredAndSortedConfigs = filteredRest;
+        filteredAndSortedConfigs = filteredConfigs;
     }
 
     // Display the filtered and sorted results
@@ -2034,8 +2654,10 @@ function resetFiltersAndSort() {
     document.getElementById('filter-model-type').value = '';
     document.getElementById('filter-calibration').value = '';
     document.getElementById('filter-calibration-method').value = '';
+    document.getElementById('filter-time-config').value = '';
     document.getElementById('filter-selected').value = '';
     document.getElementById('filter-injuries').value = '';
+    document.getElementById('show-ensembles-toggle').checked = false;
     document.getElementById('sort-by').value = 'trained_at_desc';
     applyFiltersAndSort();
 }
@@ -2126,18 +2748,26 @@ function createHistoryItem(config) {
             <div class="history-item-actions">
                 ${!config.ensemble ? `<input type="checkbox" class="ensemble-checkbox" data-config-id="${config._id}" title="Include in ensemble" style="margin-right: 8px;">` : ''}
                 ${!config.selected ? `<button class="btn btn-small" onclick="selectConfig('${config._id}')">Select</button>` : ''}
+                ${config.ensemble ? `<button class="btn btn-small" onclick="showEditEnsembleModal('${config._id}')" title="Edit meta-model features and retrain">Edit Meta</button>` : ''}
                 ${config.features_ranked && Array.isArray(config.features_ranked) && config.features_ranked.length > 0 ? `<button class="btn btn-small" onclick="showFeatureTree('${config._id}')">Feature Tree</button>` : ''}
                 ${config.training_csv ? `<a class="btn btn-small" href="/api/model-configs/${config._id}/download">Download CSV</a>` : ''}
                 <button class="btn btn-small btn-danger" onclick="deleteConfig('${config._id}')">Delete</button>
+                <button class="config-copy-btn" onclick="copyClassifierConfigToClipboard('${config._id}', this, event)" title="Copy config info">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <rect x="9" y="9" width="13" height="13" rx="2" stroke="currentColor" stroke-width="2"/>
+                        <path d="M5 15H4C2.89543 15 2 14.1046 2 13V4C2 2.89543 2.89543 2 4 2H13C14.1046 2 15 2.89543 15 4V5" stroke="currentColor" stroke-width="2"/>
+                    </svg>
+                </button>
                 <span class="expand-icon" onclick="toggleHistoryItem(this)">▼</span>
             </div>
         </div>
         <div class="history-item-meta">
-            <span><strong>Model:</strong> ${config.ensemble ? 'Ensemble (' + (config.ensemble_type || 'Stacking') + ')' : (config.model_type || 'Unknown')}</span>
+            <span><strong>Model:</strong> ${config.ensemble ? 'Ensemble (' + (config.model_type || 'LogisticRegression') + ')' : (config.model_type || 'Unknown')}</span>
             ${config.ensemble ? `<span><strong>Base Models:</strong> ${config.ensemble_models ? config.ensemble_models.length : 0}</span>` : `<span><strong>Features:</strong> ${config.feature_count || 0}</span>`}
-            ${config.best_c_value !== null && config.best_c_value !== undefined ? `<span><strong>Best C:</strong> ${config.best_c_value}</span>` : ''}
+            ${config.best_c_value !== null && config.best_c_value !== undefined ? `<span><strong>${config.ensemble ? 'Meta C' : 'Best C'}:</strong> ${config.best_c_value}</span>` : ''}
             ${config.features && Array.isArray(config.features) && config.features.includes('pred_margin') ? `<span><strong>Point Features:</strong> Yes (pred_margin)</span>` : ''}
             ${config.ensemble ? `<span><strong>Meta Features:</strong> ${formatEnsembleMetaFeatures(config)}</span>` : ''}
+            <span><strong>Min Games:</strong> ${config.min_games_played !== null && config.min_games_played !== undefined ? config.min_games_played : 'N/A'}</span>
             <span><strong>Trained:</strong> ${trainedDate}</span>
         </div>
         <div class="history-item-metrics">
@@ -2159,6 +2789,7 @@ function createHistoryItem(config) {
                 <strong>Training Stats:</strong>
                 <ul style="margin: 5px 0; padding-left: 20px; font-size: 0.9em; color: #666;">
                     <li>Games: ${config.training_stats && config.training_stats.total_games ? config.training_stats.total_games : 'N/A'}</li>
+                    <li>Min Prior Games Per Team: ${config.min_games_played !== null && config.min_games_played !== undefined ? config.min_games_played : 'N/A'}</li>
                     <li>Enhanced Features: ${config.training_stats && config.training_stats.include_enhanced_features ? 'Yes' : 'No'}</li>
                     <li>Era Normalization: ${config.training_stats && config.training_stats.include_era_normalization ? 'Yes' : 'No'}</li>
                     <li>PER Features: ${config.training_stats && config.training_stats.no_per ? 'Excluded' : 'Included'}</li>
@@ -2173,41 +2804,12 @@ function createHistoryItem(config) {
                     ` : '<li>Time-Based Calibration: No</li>'}
                 </ul>
             </div>
-            ${config.ensemble && config.ensemble_base_models_summary && Array.isArray(config.ensemble_base_models_summary) && config.ensemble_base_models_summary.length > 0 ? `
-                <div class="rated-features-section" style="margin-top: 15px;">
-                    <h5>Base Models (${config.ensemble_base_models_summary.length})</h5>
-                    <div class="rated-features-list">
-                        ${config.ensemble_base_models_summary.map((bm) => {
-                            const runId = bm && bm.run_id ? bm.run_id : 'Unknown';
-                            const modelType = bm && bm.model_type ? bm.model_type : 'Unknown';
-                            const metrics = bm && bm.metrics ? bm.metrics : {};
-
-                            const acc = metrics.accuracy_mean;
-                            const ll = metrics.log_loss_mean;
-                            const brier = metrics.brier_mean;
-                            const auc = metrics.auc_mean;
-
-                            const fmtPct = (v) => (v !== null && v !== undefined && typeof v === 'number') ? v.toFixed(2) + '%' : 'N/A';
-                            const fmtNum4 = (v) => (v !== null && v !== undefined && typeof v === 'number') ? v.toFixed(4) : 'N/A';
-
-                            return `
-                                <div class="rated-feature-item" style="display: block;">
-                                    <div style="display: flex; justify-content: space-between; gap: 10px; align-items: baseline;">
-                                        <span class="feature-name" style="font-weight: 600;">${modelType}</span>
-                                        <span style="font-family: monospace; font-size: 0.85em; color: #666;">${runId}</span>
-                                    </div>
-                                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 8px; margin-top: 6px;">
-                                        <div><strong>Accuracy:</strong> ${fmtPct(acc)}</div>
-                                        <div><strong>Log Loss:</strong> ${fmtNum4(ll)}</div>
-                                        <div><strong>Brier:</strong> ${fmtNum4(brier)}</div>
-                                        <div><strong>AUC:</strong> ${fmtNum4(auc)}</div>
-                                    </div>
-                                </div>
-                            `;
-                        }).join('')}
-                    </div>
+            ${config.ensemble ? `
+                <div style="margin-top: 12px;">
+                    ${renderTimeCalibrationBlock(config, 'Ensemble Time-Based Calibration (shared)')}
                 </div>
             ` : ''}
+            ${config.ensemble ? renderEmbeddedBaseModelPanels(config) : ''}
             ${config.features_ranked && Array.isArray(config.features_ranked) && config.features_ranked.length > 0 ? `
                 <div class="rated-features-section" style="margin-top: 15px;">
                     <h5>Rated Features (by F-Score, ${config.features_ranked.length} total)</h5>
@@ -2259,7 +2861,7 @@ function toggleHistoryItem(icon) {
 
 async function selectConfig(configId) {
     try {
-        const response = await fetch(`/api/model-configs/${configId}`, {
+        const response = await fetch(apiUrl(`/api/model-configs/${configId}`), {
             method: 'PUT',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({selected: true})
@@ -2292,13 +2894,29 @@ async function loadConfigIntoForm(configId) {
             alert('Config not found');
             return;
         }
-        
+
+        // For ensembles, collect all features from base models
+        let features = config.features || [];
+        if (config.ensemble && config.ensemble_models && config.ensemble_models.length > 0) {
+            const allFeatures = new Set(features);
+            for (const baseModelId of config.ensemble_models) {
+                const baseModel = allHistoryConfigs.find(c => c._id === baseModelId);
+                if (baseModel && baseModel.features && Array.isArray(baseModel.features)) {
+                    for (const f of baseModel.features) {
+                        allFeatures.add(f);
+                    }
+                }
+            }
+            features = Array.from(allFeatures);
+            console.log(`Ensemble: collected ${features.length} features from ${config.ensemble_models.length} base models`);
+        }
+
         // Build config object for form
         const formConfig = {
             use_master: (typeof config.use_master !== 'undefined' && config.use_master !== null) ? Boolean(config.use_master) : true,
             min_games_played: (typeof config.min_games_played !== 'undefined' && config.min_games_played !== null) ? parseInt(config.min_games_played) : 15,
             model_types: [config.model_type],
-            features: config.features || [],
+            features: features,
             c_values: config.best_c_value !== null && config.best_c_value !== undefined ? [config.best_c_value] : [],
             use_time_calibration: config.use_time_calibration || false,
             calibration_method: config.calibration_method || null,
@@ -2307,10 +2925,10 @@ async function loadConfigIntoForm(configId) {
             evaluation_year: config.evaluation_year || null,
             // Note: point_model_id is deprecated - pred_margin should be selected as a regular feature from master CSV
         };
-        
+
         setFormData(formConfig);
         currentConfig = formConfig;
-        
+
         console.log('Config loaded into form');
     } catch (error) {
         console.error(`Error loading config: ${error.message}`);
@@ -2342,7 +2960,7 @@ function editConfigName(configId, currentName) {
         const newName = input.value.trim();
         if (newName && newName !== currentName) {
             try {
-                const response = await fetch(`/api/model-configs/${configId}`, {
+                const response = await fetch(apiUrl(`/api/model-configs/${configId}`), {
                     method: 'PUT',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({name: newName})
@@ -2426,7 +3044,7 @@ async function deleteConfig(configId) {
     }
     
     try {
-        const response = await fetch(`/api/model-configs/${configId}`, {
+        const response = await fetch(apiUrl(`/api/model-configs/${configId}`), {
             method: 'DELETE'
         });
         
@@ -2447,6 +3065,139 @@ async function deleteConfig(configId) {
     }
 }
 
+// Copy config info to clipboard
+function copyClassifierConfigToClipboard(configId, button, event) {
+    event.stopPropagation();
+
+    const config = allHistoryConfigs.find(c => c._id === configId);
+    if (!config) {
+        alert('Config not found');
+        return;
+    }
+
+    let trainedDate = 'Unknown';
+    try {
+        if (config.trained_at) {
+            trainedDate = new Date(config.trained_at).toLocaleString();
+        }
+    } catch (e) {}
+
+    let text = `=== Classification Model Configuration ===\n\n`;
+    text += `Name: ${config.name || 'Unnamed'}\n`;
+    text += `Selected: ${config.selected ? 'Yes' : 'No'}\n`;
+
+    if (config.ensemble) {
+        text += `Model: Ensemble (${config.model_type || 'LogisticRegression'})\n`;
+        text += `Base Models: ${config.ensemble_models ? config.ensemble_models.length : 0}\n`;
+        if (config.best_c_value !== null && config.best_c_value !== undefined) {
+            text += `Meta C-Value: ${config.best_c_value}\n`;
+        }
+        text += `Meta Features: ${formatEnsembleMetaFeatures(config)}\n`;
+    } else {
+        text += `Model Type: ${config.model_type || 'Unknown'}\n`;
+        text += `Features: ${config.feature_count || 0}\n`;
+        if (config.best_c_value !== null && config.best_c_value !== undefined) {
+            text += `Best C: ${config.best_c_value}\n`;
+        }
+    }
+    text += `Trained: ${trainedDate}\n\n`;
+
+    text += `--- Metrics ---\n`;
+    text += `Accuracy: ${config.accuracy !== null && config.accuracy !== undefined ? (typeof config.accuracy === 'number' ? config.accuracy.toFixed(4) : config.accuracy) + '%' : 'N/A'}\n`;
+    text += `Log Loss: ${config.log_loss !== null && config.log_loss !== undefined ? (typeof config.log_loss === 'number' ? config.log_loss.toFixed(6) : config.log_loss) : 'N/A'}\n`;
+    text += `Brier Score: ${config.brier_score !== null && config.brier_score !== undefined ? (typeof config.brier_score === 'number' ? config.brier_score.toFixed(6) : config.brier_score) : 'N/A'}\n\n`;
+
+    text += `--- Training Stats ---\n`;
+    const ts = config.training_stats || {};
+    text += `Games: ${ts.total_games || 'N/A'}\n`;
+    text += `Enhanced Features: ${ts.include_enhanced_features ? 'Yes' : 'No'}\n`;
+    text += `Era Normalization: ${ts.include_era_normalization ? 'Yes' : 'No'}\n`;
+    text += `PER Features: ${ts.no_per ? 'Excluded' : 'Included'}\n`;
+    text += `Model-Specific: ${ts.model_specific_features ? 'Yes' : 'No'}\n`;
+    text += `Point Prediction Features: ${config.features && Array.isArray(config.features) && config.features.includes('pred_margin') ? 'Yes (pred_margin)' : 'No'}\n\n`;
+
+    if (config.use_time_calibration) {
+        text += `--- Time-Based Calibration ---\n`;
+        text += `Enabled: Yes\n`;
+        text += `Method: ${config.calibration_method || 'N/A'}\n`;
+        text += `Begin Year: ${config.begin_year || 'N/A'}\n`;
+        text += `Calibration Years: ${Array.isArray(config.calibration_years) ? config.calibration_years.join(', ') : (config.calibration_years || config.calibration_year || 'N/A')}\n`;
+        text += `Evaluation Year: ${config.evaluation_year || 'N/A'}\n\n`;
+    }
+
+    // Ensemble base models
+    if (config.ensemble && config.ensemble_models && config.ensemble_models.length > 0) {
+        text += `--- Base Models ---\n`;
+        config.ensemble_models.forEach((baseModelId, idx) => {
+            const baseConfig = allHistoryConfigs.find(c => c._id === baseModelId);
+            if (baseConfig) {
+                text += `\n[Base Model ${idx + 1}] ${baseConfig.name || 'Unnamed'}\n`;
+                text += `  Model Type: ${baseConfig.model_type || 'Unknown'}\n`;
+                text += `  Features: ${baseConfig.feature_count || 0}\n`;
+                text += `  Accuracy: ${baseConfig.accuracy !== null && baseConfig.accuracy !== undefined ? (typeof baseConfig.accuracy === 'number' ? baseConfig.accuracy.toFixed(4) : baseConfig.accuracy) + '%' : 'N/A'}\n`;
+                text += `  Log Loss: ${baseConfig.log_loss !== null && baseConfig.log_loss !== undefined ? (typeof baseConfig.log_loss === 'number' ? baseConfig.log_loss.toFixed(6) : baseConfig.log_loss) : 'N/A'}\n`;
+                text += `  Brier Score: ${baseConfig.brier_score !== null && baseConfig.brier_score !== undefined ? (typeof baseConfig.brier_score === 'number' ? baseConfig.brier_score.toFixed(6) : baseConfig.brier_score) : 'N/A'}\n`;
+                if (baseConfig.best_c_value !== null && baseConfig.best_c_value !== undefined) {
+                    text += `  Best C: ${baseConfig.best_c_value}\n`;
+                }
+            } else {
+                text += `\n[Base Model ${idx + 1}] ID: ${baseModelId} (not found)\n`;
+            }
+        });
+        text += `\n`;
+    }
+
+    // Feature rankings by F-Score with Importance scores on the same line
+    if (config.features_ranked && Array.isArray(config.features_ranked) && config.features_ranked.length > 0) {
+        // Build a lookup map for importance scores by feature name
+        const importanceMap = {};
+        if (config.features_ranked_by_importance && Array.isArray(config.features_ranked_by_importance)) {
+            config.features_ranked_by_importance.forEach(f => {
+                if (f.name) {
+                    importanceMap[f.name] = f.score;
+                }
+            });
+        }
+
+        text += `--- Feature Rankings (ordered by F-Score, ${config.features_ranked.length} total) ---\n`;
+        config.features_ranked.forEach((f) => {
+            const rank = f.rank || 0;
+            const name = f.name || 'Unknown';
+            const fScore = f.score !== null && f.score !== undefined ? (typeof f.score === 'number' ? f.score.toFixed(6) : f.score) : null;
+            const importance = importanceMap[name];
+            const importanceStr = importance !== null && importance !== undefined ? (typeof importance === 'number' ? importance.toFixed(6) : importance) : null;
+
+            let line = `${rank.toString().padStart(3, ' ')}. ${name}`;
+            if (fScore !== null) {
+                line += ` (F-Score: ${fScore})`;
+            }
+            if (importanceStr !== null) {
+                line += ` (Importance: ${importanceStr})`;
+            }
+            text += line + `\n`;
+        });
+        text += `\n`;
+    }
+
+    // Model path
+    if (config.model_path) {
+        text += `--- Model Files ---\n`;
+        text += `Model Path: ${config.model_path}\n`;
+    }
+
+    // Copy to clipboard
+    navigator.clipboard.writeText(text).then(() => {
+        // Visual feedback
+        button.classList.add('copied');
+        setTimeout(() => {
+            button.classList.remove('copied');
+        }, 1500);
+    }).catch(err => {
+        console.error('Failed to copy:', err);
+        alert('Failed to copy to clipboard');
+    });
+}
+
 // Feature Tree Modal Functions
 function showFeatureTree(configId) {
     const config = allHistoryConfigs.find(c => c._id === configId);
@@ -2454,10 +3205,10 @@ function showFeatureTree(configId) {
         alert('No feature rankings available for this configuration.');
         return;
     }
-    
+
     // Build feature tree
     const tree = buildFeatureTree(config.features_ranked);
-    
+
     // Display modal
     const modal = document.getElementById('feature-tree-modal');
     const modalContent = document.getElementById('feature-tree-content');
@@ -2979,7 +3730,7 @@ function createEnsemble() {
     createBtn.disabled = true;
 
     // Call API to create ensemble
-    fetch('/api/model-configs/create-ensemble', {
+    fetch(apiUrl('/api/model-configs/create-ensemble'), {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json'
@@ -3092,7 +3843,185 @@ function formatEnsembleMetaFeatures(config) {
 
     return parts.length > 0 ? parts.join(' | ') : 'None';
 }
+
+// ============================================================
+// Edit Ensemble Meta Features
+// ============================================================
+
+let currentEditEnsembleId = null;
+
+function showEditEnsembleModal(ensembleId) {
+    currentEditEnsembleId = ensembleId;
+
+    // Find the ensemble config from loaded data
+    const config = allHistoryConfigs?.find(c => c._id === ensembleId);
+    if (!config) {
+        alert('Ensemble config not found');
+        return;
+    }
+
+    // Pre-populate the form
+    document.getElementById('edit-ensemble-use-disagree').checked = config.ensemble_use_disagree || false;
+    document.getElementById('edit-ensemble-use-conf').checked = config.ensemble_use_conf || false;
+    document.getElementById('edit-ensemble-custom-features').value =
+        (config.ensemble_meta_features || []).join(', ');
+
+    // Show current meta-model type
+    document.getElementById('edit-ensemble-meta-model-type').value = config.model_type || 'LogisticRegression';
+
+    // Update the summary
+    updateEditEnsembleMetaSummary();
+
+    // Show the modal
+    document.getElementById('edit-ensemble-modal').style.display = 'flex';
+}
+
+function closeEditEnsembleModal() {
+    document.getElementById('edit-ensemble-modal').style.display = 'none';
+    currentEditEnsembleId = null;
+}
+
+function updateEditEnsembleMetaSummary() {
+    const useDisagree = document.getElementById('edit-ensemble-use-disagree').checked;
+    const useConf = document.getElementById('edit-ensemble-use-conf').checked;
+    const customText = document.getElementById('edit-ensemble-custom-features').value.trim();
+    const customFeatures = customText.split(',').map(f => f.trim()).filter(f => f.length > 0);
+
+    const parts = [];
+    if (useDisagree) parts.push('Disagreement (disagree_*)');
+    if (useConf) parts.push('Confidence (conf_*)');
+    if (customFeatures.length > 0) parts.push('Custom: ' + customFeatures.join(', '));
+
+    const summaryEl = document.getElementById('edit-ensemble-meta-summary-text');
+    summaryEl.textContent = parts.length > 0 ? parts.join(' | ') : 'Base model outputs only (p_*)';
+}
+
+async function submitEditEnsemble() {
+    if (!currentEditEnsembleId) {
+        alert('No ensemble selected');
+        return;
+    }
+
+    const useDisagree = document.getElementById('edit-ensemble-use-disagree').checked;
+    const useConf = document.getElementById('edit-ensemble-use-conf').checked;
+    const customText = document.getElementById('edit-ensemble-custom-features').value.trim();
+    const customFeatures = customText.split(',').map(f => f.trim()).filter(f => f.length > 0);
+    const metaModelType = document.getElementById('edit-ensemble-meta-model-type').value;
+
+    const submitBtn = document.getElementById('edit-ensemble-submit-btn');
+    const originalText = submitBtn.textContent;
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Retraining...';
+
+    try {
+        const response = await fetch(apiUrl(`/api/ensembles/${currentEditEnsembleId}/retrain-meta`), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                ensemble_meta_features: customFeatures,
+                ensemble_use_disagree: useDisagree,
+                ensemble_use_conf: useConf,
+                meta_model_type: metaModelType
+            })
+        });
+
+        const result = await response.json();
+
+        if (result.success) {
+            closeEditEnsembleModal();
+
+            // If there's a job_id, we need to poll for completion
+            if (result.job_id) {
+                alert('Meta-model retraining started. The model will be updated when training completes.');
+                // Could add job polling here if desired
+            } else {
+                alert('Meta-model updated successfully!');
+            }
+
+            // Refresh the config list
+            loadHistory();
+        } else {
+            alert('Error updating ensemble: ' + (result.error || 'Unknown error'));
+        }
+    } catch (error) {
+        console.error('Error updating ensemble:', error);
+        alert('Error updating ensemble: ' + error.message);
+    } finally {
+        submitBtn.disabled = false;
+        submitBtn.textContent = originalText;
+    }
+}
 </script>
+
+<!-- Edit Ensemble Meta Features Modal -->
+<div id="edit-ensemble-modal" class="edit-ensemble-modal" style="display: none;">
+    <div class="edit-ensemble-modal-content">
+        <div class="edit-ensemble-modal-header">
+            <h3>Edit Ensemble Meta Features</h3>
+            <span class="edit-ensemble-modal-close" onclick="closeEditEnsembleModal()">&times;</span>
+        </div>
+        <div class="edit-ensemble-modal-body">
+            <p style="color: #666; font-size: 0.9em; margin-bottom: 15px;">
+                Modify the meta-model features and retrain. Base model outputs (p_*) are always included.
+            </p>
+
+            <!-- Meta Model Type -->
+            <div style="margin-bottom: 15px;">
+                <label style="font-weight: 500; display: block; margin-bottom: 6px;">Meta-Model Type:</label>
+                <select id="edit-ensemble-meta-model-type" style="padding: 8px; border: 1px solid #ddd; border-radius: 4px; width: 100%;">
+                    <option value="LogisticRegression">Logistic Regression</option>
+                    <option value="GradientBoosting">Gradient Boosting</option>
+                    <option value="RandomForest">Random Forest</option>
+                    <option value="XGBoost">XGBoost</option>
+                </select>
+            </div>
+
+            <!-- Derived Features -->
+            <div style="margin-bottom: 15px;">
+                <label style="font-weight: 500; display: block; margin-bottom: 8px;">Derived Features:</label>
+                <div style="display: flex; flex-direction: column; gap: 8px;">
+                    <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                        <input type="checkbox" id="edit-ensemble-use-disagree" onchange="updateEditEnsembleMetaSummary()">
+                        <span>Include Disagreement Features (disagree_*)</span>
+                    </label>
+                    <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                        <input type="checkbox" id="edit-ensemble-use-conf" onchange="updateEditEnsembleMetaSummary()">
+                        <span>Include Confidence Features (conf_*)</span>
+                    </label>
+                </div>
+            </div>
+
+            <!-- Custom Features -->
+            <div style="margin-bottom: 15px;">
+                <label style="font-weight: 500; display: block; margin-bottom: 6px;">Custom Features (comma-separated):</label>
+                <input type="text" id="edit-ensemble-custom-features"
+                       placeholder="e.g., pred_margin, elo|season|rating|diff"
+                       oninput="updateEditEnsembleMetaSummary()"
+                       style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box;">
+                <span style="font-size: 0.85em; color: #888;">Common: pred_margin (requires points model predictions in master CSV)</span>
+            </div>
+
+            <!-- Summary -->
+            <div style="background: #f5f9ff; padding: 12px; border-radius: 6px; margin-bottom: 15px;">
+                <strong style="font-size: 0.9em;">Meta features to include:</strong>
+                <span id="edit-ensemble-meta-summary-text" style="font-size: 0.9em; color: #555;">Base model outputs only (p_*)</span>
+            </div>
+
+            <!-- Warning -->
+            <div style="background: #fff8e6; border: 1px solid #ffc107; padding: 10px; border-radius: 6px; margin-bottom: 15px;">
+                <strong style="color: #856404;">Note:</strong>
+                <span style="color: #856404; font-size: 0.9em;">
+                    This will retrain the meta-model using existing base model out-of-fold predictions.
+                    Base models are not affected.
+                </span>
+            </div>
+        </div>
+        <div class="edit-ensemble-modal-footer">
+            <button class="btn" onclick="closeEditEnsembleModal()">Cancel</button>
+            <button class="btn btn-primary" id="edit-ensemble-submit-btn" onclick="submitEditEnsemble()">Retrain Meta-Model</button>
+        </div>
+    </div>
+</div>
 
 <!-- Feature Tree Modal -->
 <div id="feature-tree-modal" class="feature-tree-modal" style="display: none;">
@@ -3103,6 +4032,68 @@ function formatEnsembleMetaFeatures(config) {
 </div>
 
 <style>
+/* Edit Ensemble Modal */
+.edit-ensemble-modal {
+    display: none;
+    position: fixed;
+    z-index: 2000;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0,0,0,0.5);
+    justify-content: center;
+    align-items: center;
+}
+
+.edit-ensemble-modal-content {
+    background: white;
+    border-radius: 12px;
+    width: 90%;
+    max-width: 500px;
+    box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+    overflow: hidden;
+}
+
+.edit-ensemble-modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 16px 20px;
+    background: #f8f9fa;
+    border-bottom: 1px solid #e9ecef;
+}
+
+.edit-ensemble-modal-header h3 {
+    margin: 0;
+    font-size: 1.1em;
+    color: #333;
+}
+
+.edit-ensemble-modal-close {
+    font-size: 24px;
+    color: #999;
+    cursor: pointer;
+    line-height: 1;
+}
+
+.edit-ensemble-modal-close:hover {
+    color: #333;
+}
+
+.edit-ensemble-modal-body {
+    padding: 20px;
+}
+
+.edit-ensemble-modal-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+    padding: 16px 20px;
+    background: #f8f9fa;
+    border-top: 1px solid #e9ecef;
+}
+
 .feature-tree-modal {
     display: none;
     position: fixed;

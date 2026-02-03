@@ -13,17 +13,19 @@ parent_dir = os.path.dirname(os.path.dirname(os.path.dirname(script_dir)))
 if parent_dir not in sys.path:
     sys.path.insert(0, parent_dir)
 
-from nba_app.cli.Mongo import Mongo
+from nba_app.core.mongo import Mongo
+from nba_app.core.utils import get_season_from_date
 
 
-def get_game(game_id: str, db=None) -> Dict:
+def get_game(game_id: str, db=None, games_collection: str = 'stats_nba') -> Dict:
     """
     Get game information.
-    
+
     Args:
         game_id: Game ID (ESPN game identifier)
         db: Optional MongoDB database instance
-        
+        games_collection: Name of the games collection (default: 'stats_nba')
+
     Returns:
         Dict with game information including:
         - game_id: Game ID
@@ -36,9 +38,9 @@ def get_game(game_id: str, db=None) -> Dict:
     """
     if db is None:
         db = Mongo().db
-    
-    game = db.stats_nba.find_one({'game_id': game_id})
-    
+
+    game = db[games_collection].find_one({'game_id': game_id})
+
     if not game:
         return {'error': f'Game {game_id} not found'}
     
@@ -58,10 +60,10 @@ def get_game(game_id: str, db=None) -> Dict:
     return result
 
 
-def get_team_games(team: str, season: str, before_date: str = None, home_only: bool = False, away_only: bool = False, limit: int = None, db=None) -> List[Dict]:
+def get_team_games(team: str, season: str, before_date: str = None, home_only: bool = False, away_only: bool = False, limit: int = None, db=None, games_collection: str = 'stats_nba') -> List[Dict]:
     """
     Get games for a team in a season.
-    
+
     Args:
         team: Team abbreviation (e.g., 'LAL', 'BOS')
         season: Season string (YYYY-YYYY format)
@@ -70,13 +72,14 @@ def get_team_games(team: str, season: str, before_date: str = None, home_only: b
         away_only: If True, only return away games
         limit: Optional limit on number of games to return
         db: Optional MongoDB database instance
-        
+        games_collection: Name of the games collection (default: 'stats_nba')
+
     Returns:
         List of Dict with game information, sorted by date descending (most recent first)
     """
     if db is None:
         db = Mongo().db
-    
+
     query = {
         'season': season,
         '$or': [
@@ -117,7 +120,7 @@ def get_team_games(team: str, season: str, before_date: str = None, home_only: b
     }
     
     # Sort by date descending (most recent first)
-    games = list(db.stats_nba.find(query, projection).sort('date', -1))
+    games = list(db[games_collection].find(query, projection).sort('date', -1))
     
     if limit:
         games = games[:limit]
@@ -146,92 +149,80 @@ def get_team_games(team: str, season: str, before_date: str = None, home_only: b
     return results
 
 
-def get_team_last_games(N: int, team: str, season: str = None, before_date: str = None, db=None) -> List[Dict]:
+def get_team_last_games(N: int, team: str, season: str = None, before_date: str = None, db=None, games_collection: str = 'stats_nba') -> List[Dict]:
     """
     Get the last N games for a team.
-    
+
     Args:
         N: Number of games to return
         team: Team abbreviation (e.g., 'LAL', 'BOS')
         season: Optional season string (YYYY-YYYY format). If not provided, uses current season.
         before_date: Optional date string (YYYY-MM-DD format). Only return games before this date.
         db: Optional MongoDB database instance
-        
+        games_collection: Name of the games collection (default: 'stats_nba')
+
     Returns:
         List of Dict with game information, sorted by date descending (most recent first)
     """
     if db is None:
         db = Mongo().db
-    
+
     # If season not provided, try to infer from current date or before_date
     if not season:
         if before_date:
             try:
                 date_obj = datetime.strptime(before_date, '%Y-%m-%d').date()
-                if date_obj.month > 8:  # Oct-Dec
-                    season = f"{date_obj.year}-{date_obj.year + 1}"
-                else:  # Jan-Jun
-                    season = f"{date_obj.year - 1}-{date_obj.year}"
+                season = get_season_from_date(date_obj)
             except:
-                now = datetime.now()
-                if now.month > 8:
-                    season = f"{now.year}-{now.year + 1}"
-                else:
-                    season = f"{now.year - 1}-{now.year}"
+                season = get_season_from_date(datetime.now())
         else:
-            now = datetime.now()
-            if now.month > 8:  # Oct-Dec
-                season = f"{now.year}-{now.year + 1}"
-            else:  # Jan-Jun
-                season = f"{now.year - 1}-{now.year}"
-    
-    return get_team_games(team, season, before_date=before_date, limit=N, db=db)
+            season = get_season_from_date(datetime.now())
+
+    return get_team_games(team, season, before_date=before_date, limit=N, db=db, games_collection=games_collection)
 
 
-def get_rosters(team: str, season: str = None, db=None) -> Dict:
+def get_rosters(team: str, season: str = None, db=None, rosters_collection: str = 'nba_rosters', players_collection: str = 'players_nba') -> Dict:
     """
     Get team roster.
-    
+
     Args:
         team: Team abbreviation (e.g., 'LAL', 'BOS')
         season: Optional season string (YYYY-YYYY format). If not provided, uses current season.
         db: Optional MongoDB database instance
-        
+        rosters_collection: Name of the rosters collection (default: 'nba_rosters')
+        players_collection: Name of the players collection (default: 'players_nba')
+
     Returns:
         Dict with roster information including:
         - team: Team abbreviation
         - season: Season string
         - roster: List of players, each with:
           - player_id: Player ID
-          - player_name: Player name (from players_nba)
+          - player_name: Player name (from players collection)
           - starter: Whether player is a starter
           - injured: Whether player is injured
     """
     if db is None:
         db = Mongo().db
-    
+
     # If season not provided, try to infer from current date
     if not season:
-        now = datetime.now()
-        if now.month > 8:  # Oct-Dec
-            season = f"{now.year}-{now.year + 1}"
-        else:  # Jan-Jun
-            season = f"{now.year - 1}-{now.year}"
-    
-    # Get roster from nba_rosters collection
-    roster_doc = db.nba_rosters.find_one({
+        season = get_season_from_date(datetime.now())
+
+    # Get roster from rosters collection
+    roster_doc = db[rosters_collection].find_one({
         'season': season,
         'team': team
     })
-    
+
     if not roster_doc:
         return {'error': f'No roster found for team {team} in season {season}'}
-    
+
     roster_list = roster_doc.get('roster', [])
-    
-    # Get player names from players_nba
+
+    # Get player names from players collection
     player_ids = [str(p.get('player_id', '')) for p in roster_list]
-    players = list(db.players_nba.find(
+    players = list(db[players_collection].find(
         {'player_id': {'$in': player_ids}},
         {'player_id': 1, 'player_name': 1}
     ))

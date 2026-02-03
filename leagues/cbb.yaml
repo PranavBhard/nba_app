@@ -1,0 +1,457 @@
+meta:
+  league_id: cbb
+  display_name: College Basketball (CBB)
+  sport: basketball
+  logo_url: /static/imgs/cbb-men.avif
+
+mongo:
+  collections:
+    # Recommended: keep CBB data isolated via distinct collections.
+    games: cbb_stats_games
+    player_stats: cbb_stats_players
+    players: cbb_players
+    teams: cbb_teams
+    venues: cbb_venues
+    rosters: cbb_rosters
+
+    model_config_classifier: cbb_model_config
+    model_config_points: cbb_model_config_points
+    model_predictions: cbb_model_predictions
+    experiment_runs: cbb_experiment_runs
+
+    master_training_metadata: master_training_data_cbb
+
+    cached_league_stats: cbb_cached_league_stats
+    elo_cache: cbb_cached_elo_ratings
+    jobs: cbb_jobs
+
+paths:
+  master_training_csv: master_training/MASTER_TRAINING_CBB.csv
+
+espn:
+  base_url_web: https://site.web.api.espn.com
+  base_url_site: https://site.api.espn.com
+
+  # TODO: replace with ESPN's league slug for men's college basketball when you provide examples.
+  # Common candidates are `mens-college-basketball` in the URL path, but the header endpoint may differ.
+  league_slug: mens-college-basketball
+
+  # TODO: replace with the correct site path segment for CBB summary/scoreboard.
+  sport_path: mens-college-basketball
+
+  endpoints:
+    scoreboard_header_template: "{base_url_web}/apis/personalized/v2/scoreboard/header?sport=basketball&league={league_slug}&region=us&lang=en&contentorigin=espn&dates={YYYYMMDD}&tz=America%2FNew_York&groups=50"
+    scoreboard_site_template: "{base_url_site}/apis/site/v2/sports/basketball/{sport_path}/scoreboard?dates={YYYYMMDD}&groups=50"
+    game_summary_template: "{base_url_web}/apis/site/v2/sports/basketball/{sport_path}/summary?region=us&lang=en&contentorigin=espn&event={game_id}"
+    teams_template: "{base_url_site}/apis/site/v2/sports/basketball/{sport_path}/teams"
+    roster_template: "{base_url_site}/apis/site/v2/sports/basketball/{sport_path}/teams/{team_id}/roster"
+
+  examples:
+    # TODO: add your real example files here when ready.
+    scoreboard_header_example: cli/structure_examples/espn_games_resp_example.md
+    game_summary_pregame_example: cli/structure_examples/espn_cbb_api_pre_game.md
+    game_summary_postgame_example: cli/structure_examples/espn_cbb_api_post_game.md
+
+season:
+  timezone: America/New_York
+  # CBB generally also crosses calendar years; keep the same default cutover for now.
+  season_cutover_month: 8
+  exclude_game_types: []
+  # Mapping from ESPN season.type -> our standardized game_type.
+  # ESPN observed: 1=preseason, 2=regular season, 3=postseason (conference/NCAA/NIT).
+  game_type_map:
+    1: preseason
+    2: regseason
+    3: postseason
+  # If ESPN marks a postseason event as a tournament game, optionally override game_type.
+  postseason_tournament_game_type: tournament
+  playin_text_override: false
+
+teams:
+  # TODO: provide mapping file or build dynamically from ESPN teams endpoint.
+  team_id_map_file: leagues/team_id_maps/cbb_espn_team_id_to_abbrev.json
+  # Primary identifier for teams: 'name' (abbreviation) or 'id' (ESPN team_id)
+  # CBB uses team_id since multiple schools may share abbreviations
+  primary_identifier: id
+  # Whether to include team_id in games and player_stats documents
+  include_team_id: true
+
+market:
+  # Kalshi series ticker for Men's College Basketball games
+  provider: kalshi
+  base_url: https://api.elections.kalshi.com/trade-api/v2
+  series_ticker: KXNCAAMBGAME
+  spread_series_ticker: KXNCAAMBSPREAD
+
+  # Event ticker format: KXNCAAMBGAME-{YY}{MON}{DD}{AWAY}{HOME}
+  # Example: KXNCAAMBGAME-26FEB02KUTTU (Kansas at Texas Tech, Feb 2 2026)
+  # Note: CBB uses 2-4 char abbreviations, not fixed 3-char like NBA
+
+  # Map Kalshi abbreviations to internal ESPN abbreviations
+  # Only teams that differ are listed; unlisted teams use same abbrev
+  # Format: kalshi_abbrev: espn_abbrev
+  team_abbrev_map:
+    # Direct mismatches found between Kalshi and ESPN
+    AC: ACU          # Abilene Christian
+    AFA: AF          # Air Force
+    ALBY: ALBA       # Albany
+    ARPB: UAPB       # Arkansas-Pine Bluff
+    BSU: BOIS        # Boise State
+    BUFF: BUF        # Buffalo
+    CAMP: CAM        # Campbell
+    CCAR: CCU        # Coastal Carolina
+    CHAR: CLT        # Charlotte
+    CHAT: UTC        # Chattanooga
+    CHS: CHST        # Chicago State
+    CLEV: CLE        # Cleveland State
+    CLMB: COLU       # Columbia
+    COOK: BCU        # Bethune-Cookman
+    CSB: CSUB        # Cal State Bakersfield
+    CSF: CSUF        # Cal State Fullerton
+    CSN: CSUN        # Cal State Northridge
+    DET: DETM        # Detroit Mercy
+    EKY: EKU         # Eastern Kentucky
+    GC: GCU          # Grand Canyon
+    HP: HPU          # High Point
+    IND: IU          # Indiana
+    IW: UIW          # Incarnate Word
+    JAC: JAX         # Jacksonville
+    JVST: JXST       # Jacksonville State
+    LCHI: LUC        # Loyola Chicago
+    LINW: LIND       # Lindenwood
+    LMC: LEM         # Le Moyne
+    LMD: L-MD        # Loyola Maryland
+    MASSL: UML       # UMass Lowell
+    MCNS: MCN        # McNeese
+    MHU: MERC        # Mercyhurst
+    MIZZ: MIZ        # Missouri
+    MOH: M-OH        # Miami (OH)
+    MOSU: MOST       # Missouri State
+    MTU: MTSU        # Middle Tennessee
+    MURR: MUR        # Murray State
+    NCST: NCSU       # NC State
+    NEOM: OMA        # Omaha
+    NHC: NHVN        # New Haven (not in ESPN)
+    NIAG: NIA        # Niagara
+    NW: NU           # Northwestern
+    OKLA: OU         # Oklahoma
+    PEAY: APSU       # Austin Peay
+    PRE: PRES        # Presbyterian
+    QUC: QUCH        # Queens University Charlotte
+    SBON: SBU        # St. Bonaventure
+    SCAR: SC         # South Carolina
+    SPC: SPU         # Saint Peter's
+    STNH: STO        # Stonehill
+    STON: STBK       # Stony Brook
+    TARL: TAR        # Tarleton State
+    TOWS: TOW        # Towson
+    TXAM: TA&M       # Texas A&M (ESPN uses TA&M with ampersand)
+    UALR: LR         # Little Rock
+    UCRV: UCR        # UC Riverside
+    ULL: UL          # Louisiana
+    UMKC: KC         # Kansas City
+    USI: SOIN        # Southern Indiana
+    UST: STMN        # St. Thomas (Minnesota)
+    UTRGV: RGV       # UT Rio Grande Valley
+    UWGA: WGA        # West Georgia (ESPN uses WGA)
+    VALP: VAL        # Valparaiso
+    WEBB: GWEB       # Gardner-Webb
+    WM: W&M          # William & Mary
+
+news_sources:
+  # =============================================================================
+  # ESPN - Primary source for CBB
+  # Note: CBB uses team_id (numeric) not abbreviations
+  # =============================================================================
+  espn:
+    base_url: https://www.espn.com
+    sport_path: mens-college-basketball
+    content_types: [news, stats, scores, injuries, schedule, boxscore]
+
+    patterns:
+      # Team-level (uses team_id, not abbreviation)
+      team: /{sport_path}/team/_/id/{team_id}
+      team_news: /{sport_path}/team/news/_/id/{team_id}
+      team_schedule: /{sport_path}/team/schedule/_/id/{team_id}
+      team_roster: /{sport_path}/team/roster/_/id/{team_id}
+      team_stats: /{sport_path}/team/stats/_/id/{team_id}
+      # Player-level
+      player: /{sport_path}/player/_/id/{player_id}/{player_slug}
+      player_news: /{sport_path}/player/news/_/id/{player_id}
+      player_stats: /{sport_path}/player/stats/_/id/{player_id}
+      player_gamelog: /{sport_path}/player/gamelog/_/id/{player_id}
+      player_bio: /{sport_path}/player/bio/_/id/{player_id}
+      # Game-level
+      game: /{sport_path}/game/_/gameId/{game_id}
+      game_boxscore: /{sport_path}/boxscore/_/gameId/{game_id}
+      game_playbyplay: /{sport_path}/playbyplay/_/gameId/{game_id}
+      game_recap: /{sport_path}/recap/_/gameId/{game_id}
+
+    mappings:
+      # CBB uses team_id from ESPN API (350+ teams, loaded from file)
+      team_ids_file: leagues/team_id_maps/cbb_espn_team_id_to_abbrev.json
+      player_ids_file: leagues/id_maps/cbb_espn_player_ids.json
+      game_id_field: game_id
+
+  # =============================================================================
+  # Sports Reference (College Basketball) - Best for stats
+  # =============================================================================
+  sports_reference:
+    base_url: https://www.sports-reference.com
+    content_types: [stats, roster, game_logs, historical, boxscore]
+
+    patterns:
+      # Team-level
+      team: /cbb/schools/{school_code}/{season}.html
+      team_roster: /cbb/schools/{school_code}/{season}.html#roster
+      team_schedule: /cbb/schools/{school_code}/men/{season}-schedule.html
+      team_stats: /cbb/schools/{school_code}/{season}.html#totals
+      # Player-level
+      player: /cbb/players/{player_code}.html
+      player_gamelog: /cbb/players/{player_code}/gamelog/{season}
+      # Game-level (format: /cbb/boxscores/YYYY-MM-DD-{school_code}.html)
+      game_boxscore: /cbb/boxscores/{game_date}-{home_code}.html
+
+    mappings:
+      # School codes (e.g., duke, kansas, north-carolina)
+      school_codes_file: leagues/id_maps/cbb_sportsref_school_codes.json
+      player_codes_file: leagues/id_maps/cbb_sportsref_player_codes.json
+
+  # =============================================================================
+  # KenPom - Best CBB analytics (subscription may be required)
+  # =============================================================================
+  kenpom:
+    base_url: https://kenpom.com
+    subscription_required: true
+    content_types: [analytics, ratings, efficiency, tempo]
+
+    patterns:
+      # Team-level
+      team: /team.php?team={team_name}
+      team_schedule: /team.php?team={team_name}&y={season}
+      team_history: /history.php?t={team_name}
+      # Game-level
+      game: /box.php?g={game_id}
+      # League-level
+      rankings: /index.php
+      fanmatch: /fanmatch.php
+
+    mappings:
+      # KenPom uses full team names (e.g., "Duke", "North Carolina")
+      team_names_file: leagues/id_maps/cbb_kenpom_team_names.json
+
+  # =============================================================================
+  # Bart Torvik - Free CBB analytics (similar to KenPom)
+  # =============================================================================
+  barttorvik:
+    base_url: https://barttorvik.com
+    content_types: [analytics, ratings, efficiency, projections]
+
+    patterns:
+      # Team-level
+      team: /team.php?team={team_name}&year={season}
+      team_results: /team.php?team={team_name}&year={season}&sort=date
+      # Player-level
+      player: /player.php?name={player_name}&year={season}
+      # Game-level
+      game: /box.php?gid={game_id}
+      # League-level
+      rankings: /trank.php?year={season}
+      predictions: /schedule.php?date={date}
+
+    mappings:
+      team_names_file: leagues/id_maps/cbb_torvik_team_names.json
+
+  # =============================================================================
+  # 247Sports - Recruiting focus
+  # =============================================================================
+  247sports:
+    base_url: https://247sports.com
+    content_types: [recruiting, news, commitments, rankings, transfers]
+
+    patterns:
+      # Team-level
+      team: /college/basketball/{school_slug}/
+      team_commits: /college/basketball/{school_slug}/season/{year}-basketball/commits/
+      team_roster: /college/basketball/{school_slug}/roster/
+      team_portal: /college/basketball/{school_slug}/season/{year}-basketball/portal/
+      # Player-level (recruits)
+      player: /player/{player_slug}
+      # League-level
+      rankings: /season/{year}-basketball/compositeteamrankings/
+      portal_rankings: /season/{year}-basketball/transferportalrankings/
+
+    mappings:
+      school_slugs_file: leagues/id_maps/cbb_247_school_slugs.json
+
+  # =============================================================================
+  # Rivals - Recruiting focus
+  # =============================================================================
+  rivals:
+    base_url: https://n.rivals.com
+    content_types: [recruiting, commitments, rankings, transfers]
+
+    patterns:
+      # Team-level (uses subdomains like duke.rivals.com)
+      team: https://{school}.rivals.com/basketball
+      team_commits: https://{school}.rivals.com/commitments/basketball/{year}
+      team_news: https://{school}.rivals.com/news
+      # League-level
+      rankings: /content/prospects/{year}/basketball
+      portal: /transferportal/basketball
+
+    mappings:
+      school_subdomains_file: leagues/id_maps/cbb_rivals_schools.json
+
+  # =============================================================================
+  # Fox Sports - Good for news, scores
+  # =============================================================================
+  fox_sports:
+    base_url: https://www.foxsports.com
+    content_types: [news, scores, highlights, odds]
+
+    patterns:
+      # Team-level
+      team: /college-basketball/{team_slug}-team
+      team_schedule: /college-basketball/{team_slug}-team-schedule
+      team_roster: /college-basketball/{team_slug}-team-roster
+      team_stats: /college-basketball/{team_slug}-team-stats
+      # Player-level
+      player: /college-basketball/{player_slug}-player
+      # Game-level
+      game: /college-basketball/{away_slug}-vs-{home_slug}-{date}
+      game_boxscore: /college-basketball/{away_slug}-vs-{home_slug}-{date}-boxscore
+
+    mappings:
+      team_slugs_file: leagues/id_maps/cbb_fox_team_slugs.json
+
+  # =============================================================================
+  # NBC Sports - Good for news, odds
+  # =============================================================================
+  nbc_sports:
+    base_url: https://www.nbcsports.com
+    content_types: [news, scores, odds]
+
+    patterns:
+      # Team-level
+      team: /college-basketball/{team_slug}
+      team_news: /college-basketball/{team_slug}/news
+      team_schedule: /college-basketball/{team_slug}/schedule
+      # Player-level
+      player: /college-basketball/players/{player_slug}
+
+    mappings:
+      team_slugs_file: leagues/id_maps/cbb_nbc_team_slugs.json
+
+  # =============================================================================
+  # CBS Sports - Good roster data
+  # =============================================================================
+  cbssports:
+    base_url: https://www.cbssports.com
+    content_types: [news, roster, stats, odds]
+
+    patterns:
+      # Team-level
+      team: /college-basketball/teams/{team_code}/{team_slug}/
+      team_news: /college-basketball/teams/{team_code}/{team_slug}/news/
+      team_roster: /college-basketball/teams/{team_code}/{team_slug}/roster/
+      team_schedule: /college-basketball/teams/{team_code}/{team_slug}/schedule/
+      # Player-level
+      player: /college-basketball/players/{player_slug}/
+      # Game-level
+      game_boxscore: /college-basketball/gametracker/boxscore/{game_id}/
+
+    mappings:
+      team_codes_file: leagues/id_maps/cbb_cbs_team_codes.json
+      team_slugs_file: leagues/id_maps/cbb_cbs_team_slugs.json
+
+  # =============================================================================
+  # Sports Illustrated - Good for news, analysis
+  # =============================================================================
+  sports_illustrated:
+    base_url: https://www.si.com
+    content_types: [news, analysis, rankings]
+
+    patterns:
+      # Team-level
+      team: /college/basketball/{school_slug}
+      team_news: /college/basketball/{school_slug}/news
+      # Player-level
+      player: /college/basketball/player/{player_slug}
+
+    mappings:
+      school_slugs_file: leagues/id_maps/cbb_si_school_slugs.json
+
+  # =============================================================================
+  # Yahoo Sports - Heavy JS, limited use
+  # =============================================================================
+  yahoo:
+    base_url: https://sports.yahoo.com
+    js_required: true
+    content_types: [news, scores, stats]
+
+    patterns:
+      # Team-level
+      team: /college-basketball/teams/{team_slug}/
+      team_schedule: /college-basketball/teams/{team_slug}/schedule
+      team_roster: /college-basketball/teams/{team_slug}/roster
+      # Player-level
+      player: /college-basketball/players/{player_id}
+      # Game-level
+      game: /college-basketball/games/{game_slug}
+
+    mappings:
+      team_slugs_file: leagues/id_maps/cbb_yahoo_team_slugs.json
+
+  # =============================================================================
+  # Bleacher Report - Requires headless browser
+  # =============================================================================
+  bleacher_report:
+    base_url: https://bleacherreport.com
+    js_required: true
+    content_types: [news, analysis]
+
+    patterns:
+      # Team-level only
+      team: /{school_slug}
+
+    mappings:
+      school_slugs_file: leagues/id_maps/cbb_br_school_slugs.json
+
+pipeline:
+  # First season with data (format: YYYY-YYYY)
+  min_season: "2010-2011"
+  # Season date boundaries
+  season_start_month: 11   # November
+  season_start_day: 1
+  season_end_month: 4      # April (Final Four)
+  season_end_day: 30
+
+pipelines:
+  # Full pipeline configuration
+  full:
+    steps:
+      - espn_pull:
+          parallel: true
+          max_workers: 8   # More workers for CBB (more games)
+      - post_processing:
+          refresh_venues: true
+          refresh_players: true
+          compute_injuries: true
+      - cache_elo: true
+      - generate_training:
+          workers: 32
+          chunk_size: 500
+          include_player_features: true
+      - register_csv: true
+
+  # Training-only configuration
+  training:
+    workers: 32
+    chunk_size: 500
+    include_player_features: true
+    preload:
+      games: true
+      venues: true
+      per_cache: true
+      injury_cache: true

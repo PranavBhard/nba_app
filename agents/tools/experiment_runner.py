@@ -19,13 +19,13 @@ parent_dir = os.path.dirname(os.path.dirname(os.path.dirname(script_dir)))
 if parent_dir not in sys.path:
     sys.path.insert(0, parent_dir)
 
-from nba_app.cli.train import (
+from nba_app.cli_old.train import (
     create_model_with_c,
     evaluate_model_combo,
     evaluate_model_combo_with_calibration,
     read_csv_safe
 )
-from nba_app.cli.points_regression import PointsRegressionTrainer
+from nba_app.core.models.points_regression import PointsRegressionTrainer
 from nba_app.agents.tools.dataset_builder import DatasetBuilder
 from nba_app.agents.tools.run_tracker import RunTracker
 from nba_app.agents.schemas.experiment_config import ExperimentConfig
@@ -34,24 +34,27 @@ from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 
 class ExperimentRunner:
     """Runs complete experiments"""
-    
-    def __init__(self, db=None):
+
+    def __init__(self, db=None, league=None):
         """
         Initialize ExperimentRunner.
-        
+
         Args:
             db: MongoDB database instance (optional)
+            league: LeagueConfig instance for league-specific operations
         """
         if db is None:
-            from nba_app.cli.Mongo import Mongo
+            from nba_app.core.mongo import Mongo
             mongo = Mongo()
             self.db = mongo.db
         else:
             self.db = db
-        
-        self.dataset_builder = DatasetBuilder(db=self.db)
-        self.run_tracker = RunTracker(db=self.db)
-        
+
+        self.league = league
+
+        self.dataset_builder = DatasetBuilder(db=self.db, league=league)
+        self.run_tracker = RunTracker(db=self.db, league=league)
+
         # Set up artifacts directory for classifier models
         script_dir = os.path.dirname(os.path.abspath(__file__))
         parent_dir = os.path.dirname(os.path.dirname(os.path.dirname(script_dir)))
@@ -210,6 +213,24 @@ class ExperimentRunner:
                     n_splits=n_splits
                 )
             
+            # Calculate F-scores (ANOVA F-test) for feature ranking
+            f_scores = {}
+            try:
+                from sklearn.feature_selection import SelectKBest, f_classif
+                fs = SelectKBest(score_func=f_classif, k='all')
+                fs.fit(X_scaled, y)
+                # Create dict of feature -> f_score, handling NaN values
+                for feat, score in zip(feature_cols, fs.scores_):
+                    if score is None or (isinstance(score, (float, np.floating)) and np.isnan(score)):
+                        f_scores[feat] = 0.0
+                    else:
+                        f_scores[feat] = float(score)
+                # Sort by F-score descending
+                f_scores = dict(sorted(f_scores.items(), key=lambda x: x[1], reverse=True))
+            except Exception as e:
+                print(f"Warning: Could not calculate F-scores: {e}")
+                f_scores = {}
+
             # Calculate additional metrics if possible and save model
             model = None
             feature_importances = {}
@@ -217,8 +238,8 @@ class ExperimentRunner:
                 # Train final model for feature importance and saving
                 model = create_model_with_c(exp_config.model.type, exp_config.model.c_value)
                 model.fit(X_scaled, y)
-                
-                # Get feature importances if available
+
+                # Get feature importances if available (model coefficients or tree importances)
                 if hasattr(model, 'feature_importances_'):
                     importances = model.feature_importances_
                     feature_importances = dict(zip(feature_cols, importances.tolist()))
@@ -255,7 +276,8 @@ class ExperimentRunner:
             
             # Prepare diagnostics
             diagnostics = {
-                'feature_importances': feature_importances,
+                'f_scores': f_scores,  # ANOVA F-test scores
+                'feature_importances': feature_importances,  # Model coefficients/importances
                 'n_features': len(feature_cols),
                 'n_samples': len(y),
                 'feature_names': feature_cols[:20]  # Top 20 for preview
@@ -572,27 +594,32 @@ class ExperimentRunner:
             
             # Generate predictions for all games in dataset and cache them
             # OPTIMIZATION: Use vectorized prediction instead of row-by-row
-            from nba_app.cli.point_prediction_cache import PointPredictionCache
+            from nba_app.cli_old.point_prediction_cache import PointPredictionCache
             cache = PointPredictionCache(db=self.db)
-            
+
             # Generate predictions for all games in dataset using the trained model
             # We need to load the CSV again and prepare features for prediction
             # The trainer already has the model and scaler loaded from training
             print(f"Generating predictions for {len(df)} games...")
-            
-            # Prepare features for prediction (using same scaler from training)
-            X_pred = df[feature_cols].values
-            X_pred_scaled = trainer.scaler.transform(X_pred)
-            
+
             # Handle prediction generation based on target type
             df_reset = df.reset_index(drop=True)
-            
+
             if target == 'margin':
-                # Margin-only model: predict margin directly
+                # Margin-only model: uses trainer.feature_names and trainer.scaler
+                actual_features = trainer.feature_names
+                if not actual_features:
+                    print("Warning: trainer.feature_names is empty, falling back to feature_cols")
+                    actual_features = feature_cols
+
+                X_pred = df[actual_features].values
+                X_pred_scaled = trainer.scaler.transform(X_pred)
+
+                # Predict margin directly
                 pred_margin_all = trainer.model.predict(X_pred_scaled)
                 # Clamp to reasonable range (typical NBA margin: -50 to +50)
                 pred_margin_all = np.clip(pred_margin_all, -60, 60)
-                
+
                 # Build predictions list for margin-only model (using positional indexing)
                 predictions = []
                 for pos_idx, row in df_reset.iterrows():
@@ -608,15 +635,45 @@ class ExperimentRunner:
                         'home_team': row['Home'],
                         'away_team': row['Away']
                     })
+
+                # For diagnostics/importances, use the margin model's features
+                actual_features = trainer.feature_names
             else:
-                # Home/away models: predict both separately
-                pred_home_all = trainer.model['home'].predict(X_pred_scaled)
-                pred_away_all = trainer.model['away'].predict(X_pred_scaled)
-                
+                # Home/away models: use PERSPECTIVE-SPLIT features and scalers
+                # Home model trained on: home + diff + none features (trainer.home_feature_names)
+                # Away model trained on: away + diff + none features (trainer.away_feature_names)
+                home_features = getattr(trainer, 'home_feature_names', None)
+                away_features = getattr(trainer, 'away_feature_names', None)
+
+                if not home_features or not away_features:
+                    # Fallback if perspective split wasn't used (shouldn't happen for home_away)
+                    print("Warning: home/away feature names not found, using full feature list")
+                    actual_features = trainer.feature_names or feature_cols
+                    X_pred = df[actual_features].values
+                    X_pred_scaled = trainer.scaler.transform(X_pred)
+                    pred_home_all = trainer.model['home'].predict(X_pred_scaled)
+                    pred_away_all = trainer.model['away'].predict(X_pred_scaled)
+                else:
+                    # Use perspective-specific features and scalers
+                    print(f"Using perspective-split features: home={len(home_features)}, away={len(away_features)}")
+
+                    # Prepare home features
+                    X_home_pred = df[home_features].values
+                    X_home_scaled = trainer.home_scaler.transform(X_home_pred)
+                    pred_home_all = trainer.model['home'].predict(X_home_scaled)
+
+                    # Prepare away features
+                    X_away_pred = df[away_features].values
+                    X_away_scaled = trainer.away_scaler.transform(X_away_pred)
+                    pred_away_all = trainer.model['away'].predict(X_away_scaled)
+
+                    # For diagnostics, use the combined feature list (diff + home + away)
+                    actual_features = list(set(home_features) | set(away_features))
+
                 # Clamp to reasonable range (vectorized)
                 pred_home_all = np.clip(pred_home_all, 0, 200)
                 pred_away_all = np.clip(pred_away_all, 0, 200)
-                
+
                 # Build predictions list (using positional indexing)
                 predictions = []
                 for pos_idx, row in df_reset.iterrows():
@@ -651,41 +708,59 @@ class ExperimentRunner:
             feature_importances = {}
             try:
                 if target == 'margin':
-                    # Margin-only model: single model
+                    # Margin-only model: single model with trainer.feature_names
                     model = trainer.model
+                    margin_features = trainer.feature_names or feature_cols
                     if hasattr(model, 'coef_'):
                         # Linear model (Ridge, ElasticNet) - use absolute coefficients
                         coef = model.coef_
                         if len(coef.shape) > 1:
                             coef = coef[0]
-                        feature_importances = dict(zip(feature_cols, np.abs(coef).tolist()))
+                        feature_importances = dict(zip(margin_features, np.abs(coef).tolist()))
                     elif hasattr(model, 'feature_importances_'):
                         # Tree-based model (RandomForest, XGBoost) - use feature importances
-                        feature_importances = dict(zip(feature_cols, model.feature_importances_.tolist()))
+                        feature_importances = dict(zip(margin_features, model.feature_importances_.tolist()))
                 else:
-                    # Home/away models: combine importances from both models
+                    # Home/away models: use PERSPECTIVE-SPLIT feature lists
+                    # Home model trained on home_features, away model trained on away_features
                     home_model = trainer.model['home']
                     away_model = trainer.model['away']
-                    
+                    home_feat_names = getattr(trainer, 'home_feature_names', None) or feature_cols
+                    away_feat_names = getattr(trainer, 'away_feature_names', None) or feature_cols
+
+                    # Build separate importance dicts for each model
+                    home_importances = {}
+                    away_importances = {}
+
                     if hasattr(home_model, 'coef_'):
                         # Linear model (Ridge, ElasticNet) - use absolute coefficients
                         home_coef = home_model.coef_
                         away_coef = away_model.coef_
-                        # Handle 1D or 2D coefficient arrays
                         if len(home_coef.shape) > 1:
                             home_coef = home_coef[0]
                         if len(away_coef.shape) > 1:
                             away_coef = away_coef[0]
-                        # Average absolute coefficients for combined importance
-                        combined_importance = (np.abs(home_coef) + np.abs(away_coef)) / 2
-                        feature_importances = dict(zip(feature_cols, combined_importance.tolist()))
+                        home_importances = dict(zip(home_feat_names, np.abs(home_coef).tolist()))
+                        away_importances = dict(zip(away_feat_names, np.abs(away_coef).tolist()))
                     elif hasattr(home_model, 'feature_importances_'):
                         # Tree-based model (RandomForest, XGBoost) - use feature importances
-                        home_importance = home_model.feature_importances_
-                        away_importance = away_model.feature_importances_
-                        # Average feature importances for combined importance
-                        combined_importance = (home_importance + away_importance) / 2
-                        feature_importances = dict(zip(feature_cols, combined_importance.tolist()))
+                        home_importances = dict(zip(home_feat_names, home_model.feature_importances_.tolist()))
+                        away_importances = dict(zip(away_feat_names, away_model.feature_importances_.tolist()))
+
+                    # Combine: for diff/none features (in both), average; for home-only or away-only, use that value
+                    all_features = set(home_feat_names) | set(away_feat_names)
+                    for feat in all_features:
+                        h_imp = home_importances.get(feat)
+                        a_imp = away_importances.get(feat)
+                        if h_imp is not None and a_imp is not None:
+                            # Feature in both models (diff or none perspective) - average
+                            feature_importances[feat] = (h_imp + a_imp) / 2
+                        elif h_imp is not None:
+                            # Home-only feature
+                            feature_importances[feat] = h_imp
+                        else:
+                            # Away-only feature
+                            feature_importances[feat] = a_imp
                 
                 # Sort by importance
                 if feature_importances:
@@ -708,10 +783,28 @@ class ExperimentRunner:
             selected_alpha = train_result.get('selected_alpha')
             alphas_tested = train_result.get('alphas_tested')
             
+            # Build feature info for diagnostics
+            if target == 'margin':
+                all_feat_names = trainer.feature_names or feature_cols
+                n_features = len(all_feat_names)
+                perspective_info = None
+            else:
+                home_feat_names = getattr(trainer, 'home_feature_names', None) or []
+                away_feat_names = getattr(trainer, 'away_feature_names', None) or []
+                all_feat_names = list(set(home_feat_names) | set(away_feat_names))
+                n_features = len(all_feat_names)
+                perspective_info = {
+                    'home_model_features': len(home_feat_names),
+                    'away_model_features': len(away_feat_names),
+                    'total_unique_features': n_features
+                }
+
             diagnostics = {
-                'n_features': len(feature_cols),
+                'n_features': n_features,
                 'n_samples': n_samples,
-                'feature_names': feature_cols[:20],  # Top 20 for preview
+                'feature_names': all_feat_names[:20],  # Top 20 for preview
+                'all_feature_names': all_feat_names,  # Full list of actual features used
+                'perspective_split': perspective_info,  # Info about home/away feature split (None for margin)
                 'point_model_id': model_id,
                 'cached_predictions': cached_count,
                 'feature_importances': feature_importances,  # Add feature importances for points regression

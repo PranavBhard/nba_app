@@ -23,7 +23,7 @@ if parent_of_nba_app not in sys.path:
     sys.path.insert(0, parent_of_nba_app)
 
 # Now imports with nba_app prefix should work
-from nba_app.cli.Mongo import Mongo
+from nba_app.core.mongo import Mongo
 from nba_app.agents.modeler.modeler_agent import ModelerAgent
 from langchain_core.messages import HumanMessage, AIMessage
 

@@ -52,6 +52,98 @@
             font-weight: 600;
             color: #333;
         }
+
+        .league-switcher {
+            position: relative;
+            cursor: pointer;
+        }
+
+        .league-switcher-toggle {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 24px;
+            font-weight: 600;
+            color: #333;
+            padding: 4px 8px;
+            border-radius: 6px;
+            transition: background 0.2s;
+        }
+
+        .league-switcher-toggle:hover {
+            background: #f0f0f0;
+        }
+
+        .league-switcher-toggle svg {
+            opacity: 0.5;
+            transition: opacity 0.2s;
+        }
+
+        .league-switcher-toggle:hover svg {
+            opacity: 1;
+        }
+
+        .league-switcher-menu {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            background: white;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            min-width: 200px;
+            padding: 8px 0;
+            padding-top: 13px;
+            margin-top: 0;
+            display: none;
+            z-index: 1001;
+            white-space: nowrap;
+        }
+
+        .league-switcher-menu::before {
+            content: '';
+            position: absolute;
+            top: -5px;
+            left: 0;
+            right: 0;
+            height: 5px;
+            background: transparent;
+        }
+
+        .league-switcher:hover .league-switcher-menu {
+            display: block;
+        }
+
+        .league-switcher-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px 16px;
+            color: #333;
+            text-decoration: none;
+            font-size: 14px;
+            font-weight: 500;
+            transition: background 0.2s;
+        }
+
+        .league-switcher-item:hover {
+            background: #f0f0f0;
+        }
+
+        .league-switcher-item.active {
+            background: #667eea15;
+            color: #667eea;
+        }
+
+        .league-switcher-item .check-icon {
+            width: 16px;
+            height: 16px;
+            opacity: 0;
+        }
+
+        .league-switcher-item.active .check-icon {
+            opacity: 1;
+        }
         
         .nav-menu {
             display: flex;
@@ -106,12 +198,24 @@
             box-shadow: 0 4px 12px rgba(0,0,0,0.15);
             min-width: 200px;
             padding: 8px 0;
-            margin-top: 5px;
+            padding-top: 13px; /* 8px content padding + 5px for visual gap */
+            margin-top: 0;
             display: none;
             z-index: 1001;
             white-space: nowrap;
         }
-        
+
+        /* Invisible bridge to prevent hover gap */
+        .nav-dropdown-menu::before {
+            content: '';
+            position: absolute;
+            top: -5px;
+            left: 0;
+            right: 0;
+            height: 5px;
+            background: transparent;
+        }
+
         .nav-dropdown:hover .nav-dropdown-menu {
             display: block;
         }
@@ -185,11 +289,32 @@
 <body>
     <header class="header">
         <div class="header-left">
-            <img src="{{ url_for('static', filename='imgs/NBA-Logo.png') }}" alt="NBA Logo" class="header-logo">
-            <span class="header-title">NBA AI</span>
+            <img
+                src="{{ league.logo_url or url_for('static', filename='imgs/NBA-Logo.png') }}"
+                alt="{{ league.display_name if league else 'League' }} Logo"
+                class="header-logo"
+            >
+            <div class="league-switcher">
+                <div class="league-switcher-toggle">
+                    {{ league_id.upper() }} AI
+                    <svg width="14" height="14" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                </div>
+                <div class="league-switcher-menu">
+                    {% for lg in available_leagues %}
+                    <a href="/{{ lg.id }}/" class="league-switcher-item {% if lg.id == league_id %}active{% endif %}">
+                        <svg class="check-icon" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+                            <path d="M13.5 4.5L6 12L2.5 8.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                        </svg>
+                        {{ lg.display_name }}
+                    </a>
+                    {% endfor %}
+                </div>
+            </div>
         </div>
         <nav class="nav-menu">
-            <a href="/" class="nav-item">Games</a>
+            <a href="{{ url_for('index') }}" class="nav-item">Games</a>
             <div class="nav-dropdown">
                 <span class="nav-dropdown-toggle">
                     Modeling
@@ -198,9 +323,35 @@
                     </svg>
                 </span>
                 <div class="nav-dropdown-menu">
-                    <a href="/model-config" class="nav-dropdown-item">Classification Models</a>
-                    <a href="/model-config-points" class="nav-dropdown-item">Points Regression Models</a>
-                    <a href="/master-training" class="nav-dropdown-item">Master Training Data</a>
+                    <a href="{{ url_for('model_config') }}" class="nav-dropdown-item">Classification Models</a>
+                    <a href="{{ url_for('ensemble_config') }}" class="nav-dropdown-item">Ensemble Models</a>
+                    <a href="{{ url_for('model_config_points') }}" class="nav-dropdown-item">Points Regression Models</a>
+                    <a href="{{ url_for('master_training') }}" class="nav-dropdown-item">Master Training Data</a>
+                </div>
+            </div>
+            <div class="nav-dropdown">
+                <span class="nav-dropdown-toggle">
+                    Data Caches
+                    <svg width="12" height="12" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                </span>
+                <div class="nav-dropdown-menu">
+                    <a href="{{ url_for('elo_manager') }}" class="nav-dropdown-item">Elo Ratings</a>
+                    <a href="{{ url_for('injuries_manager') }}" class="nav-dropdown-item">Injuries</a>
+                    <a href="{{ url_for('cached_league_stats_manager') }}" class="nav-dropdown-item">Cached League Stats</a>
+                    <a href="{{ url_for('espn_db_audit_manager') }}" class="nav-dropdown-item">ESPN DB Audit</a>
+                </div>
+            </div>
+            <div class="nav-dropdown">
+                <span class="nav-dropdown-toggle">
+                    Markets
+                    <svg width="12" height="12" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                </span>
+                <div class="nav-dropdown-menu">
+                    <a href="{{ url_for('market_dashboard') }}" class="nav-dropdown-item">Dashboard</a>
                 </div>
             </div>
         </nav>
@@ -210,6 +361,44 @@
         {% block content %}{% endblock %}
     </div>
     
+    <script>
+      window.LEAGUE_ID = "{{ league_id }}";
+      window.LEAGUE_PREFIX = "/{{ league_id }}";
+      (function() {
+        const _fetch = window.fetch ? window.fetch.bind(window) : null;
+        if (!_fetch) return;
+        window.fetch = function(input, init) {
+          if (typeof input === "string" && input.startsWith("/api/")) {
+            input = window.LEAGUE_PREFIX + input;
+          }
+          return _fetch(input, init);
+        };
+      })();
+      (function() {
+        function prefixApiLinks(root) {
+          if (!root || !root.querySelectorAll) return;
+          root.querySelectorAll('a[href^="/api/"]').forEach(a => {
+            const href = a.getAttribute("href");
+            if (href && href.startsWith("/api/")) a.setAttribute("href", window.LEAGUE_PREFIX + href);
+          });
+          root.querySelectorAll('form[action^="/api/"]').forEach(f => {
+            const action = f.getAttribute("action");
+            if (action && action.startsWith("/api/")) f.setAttribute("action", window.LEAGUE_PREFIX + action);
+          });
+        }
+        document.addEventListener("DOMContentLoaded", () => {
+          prefixApiLinks(document);
+          const obs = new MutationObserver((mutations) => {
+            for (const m of mutations) {
+              for (const n of m.addedNodes || []) {
+                if (n && n.nodeType === 1) prefixApiLinks(n);
+              }
+            }
+          });
+          obs.observe(document.body, { childList: true, subtree: true });
+        });
+      })();
+    </script>
     {% block scripts %}{% endblock %}
 </body>
 </html>

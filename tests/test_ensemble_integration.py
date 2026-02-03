@@ -34,7 +34,7 @@ def test_ensemble_implementation_summary():
         "web/app.py - run_ensemble_training_job(): Async training with time config passing",
         "web/templates/model_config.html: Frontend ensemble form handling",
         "agents/tools/stacking_tool.py: Rule 4 OOF validation + Rule 5 temporal split",
-        "cli/NBAModel.py: Ensemble prediction support"
+        "cli/BballModel.py: Ensemble prediction support"
     ]
     
     for tech in technical:

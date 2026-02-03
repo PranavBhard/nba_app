@@ -66,7 +66,7 @@ def test_unified_infrastructure():
                 "1. ModelConfigManager.get_selected_config() → Get from MongoDB",
                 "2. ModelFactory.create_model() → Load from artifacts (fast)",
                 "3. Fallback to retraining if artifacts missing",
-                "4. NBAModel instance ready for predictions"
+                "4. BballModel instance ready for predictions"
             ]
         },
         {

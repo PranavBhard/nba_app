@@ -95,10 +95,7 @@ class FeatureConfig(BaseModel):
     
     # PER features
     include_per: bool = Field(True, description="Include PER (Player Efficiency Rating) features")
-    
-    # Model-specific features
-    use_model_specific: bool = Field(False, description="Use model-specific feature sets")
-    
+
     # Point prediction features (optional)
     point_model_id: Optional[str] = Field(
         None,
@@ -119,7 +116,6 @@ class FeatureConfig(BaseModel):
             'elo_strength',
             'era_normalization',
             'player_talent',
-            'absolute_magnitude',
             'injuries'
         ]
         for block in v:

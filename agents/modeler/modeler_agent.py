@@ -37,37 +37,39 @@ from nba_app.agents.tools.run_tracker import RunTracker
 from nba_app.agents.tools.dataset_augmenter import DatasetAugmenter
 from nba_app.agents.tools.blend_experimenter import BlendExperimenter
 from nba_app.agents.tools.stacking_tool import StackingTrainer
-from nba_app.cli.Mongo import Mongo
+from nba_app.core.mongo import Mongo
 from nba_app.agents.utils.json_compression import encode_message_content
 
 
 class ModelerAgent:
     """LangChain-based agent for NBA modeling assistance"""
-    
-    def __init__(self, session_id: str, db=None, llm=None):
+
+    def __init__(self, session_id: str, db=None, llm=None, league=None):
         """
         Initialize ModelerAgent.
-        
+
         Args:
             session_id: Chat session identifier
             db: MongoDB database instance (optional)
             llm: LangChain LLM instance (optional, will create if not provided)
+            league: LeagueConfig instance for league-specific operations
         """
         if db is None:
             mongo = Mongo()
             self.db = mongo.db
         else:
             self.db = db
-        
+
         self.session_id = session_id
-        self.run_tracker = RunTracker(db=self.db)
-        self.dataset_builder = DatasetBuilder(db=self.db)
-        self.experiment_runner = ExperimentRunner(db=self.db)
+        self.league = league
+        self.run_tracker = RunTracker(db=self.db, league=league)
+        self.dataset_builder = DatasetBuilder(db=self.db, league=league)
+        self.experiment_runner = ExperimentRunner(db=self.db, league=league)
         self.support_tools = SupportTools(db=self.db)
         self.blend_experimenter = BlendExperimenter(db=self.db)
         self.code_executor = CodeExecutor(db=self.db)
         self.dataset_augmenter = DatasetAugmenter(db=self.db)
-        self.stacking_trainer = StackingTrainer(db=self.db)
+        self.stacking_trainer = StackingTrainer(db=self.db, league=league)
         
         # Load system message
         system_message_path = Path(__file__).parent / 'system_message.txt'
@@ -161,7 +163,73 @@ class ModelerAgent:
             name="get_last_run_features",
             description="Get features used in the most recent experiment run for this session. Returns feature blocks, actual feature names, run_id, and metrics. Useful for understanding what features were used in the last turn."
         ))
-        
+
+        # get_selected_configs
+        tools.append(StructuredTool.from_function(
+            func=self.support_tools.get_selected_configs,
+            name="get_selected_configs",
+            description="Get the currently selected model configurations (classifier and points regression) from the web UI. Returns the full config for each model type including model_type, features, hyperparameters, and training settings. Use this to understand the production model setup."
+        ))
+
+        # get_config_by_id
+        tools.append(StructuredTool.from_function(
+            func=self.support_tools.get_config_by_id,
+            name="get_config_by_id",
+            description="Get a model configuration by its MongoDB ObjectId. Takes config_id (string) and config_type ('classifier' or 'points'). Returns the full config document including all features, hyperparameters, artifact paths, and training metadata."
+        ))
+
+        # list_trained_configs
+        tools.append(StructuredTool.from_function(
+            func=self.support_tools.list_trained_configs,
+            name="list_trained_configs",
+            description="List all trained model configurations with metadata. Takes config_type ('classifier', 'points', or 'all'), limit (default 20), and include_untrained (default False). Returns configs sorted by trained_at with feature counts, selection status, calibration settings, and artifact availability."
+        ))
+
+        # run_prediction_with_config
+        tools.append(StructuredTool.from_function(
+            func=self.support_tools.run_prediction_with_config,
+            name="run_prediction_with_config",
+            description="Run a prediction using a specific trained model config (not just the selected one). Takes config_id, home team, away team, optional game_date (YYYY-MM-DD), and optional points_config_id. Returns win probabilities, American odds, and point predictions. Use this to compare predictions across different trained models."
+        ))
+
+        # config_to_experiment_spec
+        tools.append(StructuredTool.from_function(
+            func=self.support_tools.config_to_experiment_spec,
+            name="config_to_experiment_spec",
+            description="Convert a MongoDB model config to an ExperimentConfig-compatible dict. Takes config_id and config_type. Returns an experiment spec with reproducibility status and warnings if dataset fields were defaulted. Use this to reproduce or iterate on existing production configs."
+        ))
+
+        # create_model_config
+        tools.append(StructuredTool.from_function(
+            func=self.support_tools.create_model_config,
+            name="create_model_config",
+            description="Create a new model configuration in MongoDB. Uses same infrastructure as web UI - configs are upserted by hash (same params = same config). Takes config_type ('classifier'/'points'), model_type, features or feature_blocks, and hyperparameters. Returns config_id and hash. Use this to create configs before running experiments."
+        ))
+
+        # run_experiment_from_config
+        def run_experiment_from_config_with_budget(
+            config_id: str,
+            config_type: str = 'classifier',
+            modifications: Dict = None,
+            link_to_config: bool = True
+        ) -> Dict:
+            """Run experiment from config with budget enforcement."""
+            if self.runs_this_request >= self.max_runs_per_request:
+                raise ValueError(f"Run budget exceeded. Maximum {self.max_runs_per_request} runs per request.")
+            self.runs_this_request += 1
+            return self.support_tools.run_experiment_from_config(
+                config_id=config_id,
+                config_type=config_type,
+                modifications=modifications,
+                link_to_config=link_to_config
+            )
+
+        tools.append(StructuredTool.from_function(
+            func=run_experiment_from_config_with_budget,
+            name="run_experiment_from_config",
+            description=f"Run an experiment using an existing config as the base. Takes config_id, config_type, optional modifications dict, and link_to_config flag. Automatically links results back to the config. Use this to train/retrain configs or test variations. Budget: {self.max_runs_per_request} runs per request."
+        ))
+
         # explain_feature_calculation
         tools.append(StructuredTool.from_function(
             func=self.support_tools.explain_feature_calculation,

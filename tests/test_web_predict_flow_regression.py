@@ -93,7 +93,7 @@ class _FakeMongo:
         self.db = kwargs.get("db")
 
 
-class _FakeNBAModel:
+class _FakeBballModel:
     def __init__(
         self,
         classifier_features,
@@ -163,7 +163,7 @@ def test_web_predict_flow_regression(game_id: str = "401810422") -> bool:
     fake_db = _FakeDB(selected_classifier_config=selected_classifier_config)
 
     # Patch Mongo before importing the web module, since it instantiates Mongo() at import time.
-    with mock.patch('nba_app.cli.Mongo.Mongo', autospec=True) as MongoPatched:
+    with mock.patch('nba_app.cli_old.Mongo.Mongo', autospec=True) as MongoPatched:
         MongoPatched.return_value = SimpleNamespace(db=fake_db)
 
         # Import web.app fresh (in case a prior import exists in the interpreter)
@@ -172,7 +172,7 @@ def test_web_predict_flow_regression(game_id: str = "401810422") -> bool:
         web_app = importlib.import_module('nba_app.web.app')
 
     # Hard-override heavyweight pieces to keep the test deterministic.
-    web_app.NBAModel = _FakeNBAModel
+    web_app.BballModel = _FakeBballModel
 
     def _fake_create_model(config, use_artifacts: bool = True):
         dummy_model = object()

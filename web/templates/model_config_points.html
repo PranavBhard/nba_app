@@ -96,14 +96,16 @@
                             </div>
                             <div class="feature-list" id="features-{{ set_name }}" style="display: none;">
                                 {% for feature in set_features %}
-                                <label class="feature-item">
-                                    <input type="checkbox" 
-                                           name="features" 
-                                           value="{{ feature }}" 
+                                <label class="feature-item{% if feature not in available_features %} feature-unavailable{% endif %}">
+                                    <input type="checkbox"
+                                           name="features"
+                                           value="{{ feature }}"
                                            class="feature-checkbox"
                                            data-set="{{ set_name }}"
-                                           checked>
+                                           {% if feature in available_features %}checked{% endif %}
+                                           {% if feature not in available_features %}disabled title="Not available in training data"{% endif %}>
                                     <span class="feature-name">{{ feature }}</span>
+                                    {% if feature not in available_features %}<span class="feature-unavailable-badge" title="Not in MASTER_TRAINING.csv">⚠</span>{% endif %}
                                 </label>
                                 {% endfor %}
                             </div>
@@ -152,6 +154,20 @@
                     <button type="button" id="train-btn" class="train-btn">Train Model</button>
                     <button type="button" id="save-config-btn" class="save-btn" style="display: none;">Save Configuration</button>
                 </div>
+
+                <!-- Training Status -->
+                <div id="training-status" class="training-status" style="display: none;">
+                    <div class="spinner"></div>
+                    <span>Training model... This may take a few minutes.</span>
+                </div>
+
+                <!-- Training Results -->
+                <div id="training-results" class="training-results" style="display: none;">
+                </div>
+
+                <!-- Training Error -->
+                <div id="training-error" class="training-error" style="display: none;">
+                </div>
             </form>
         </div>
         
@@ -159,53 +175,62 @@
         <div class="results-panel">
             <!-- Saved Configs Section -->
             <div class="configs-section">
-                <h3>Saved Model Configurations</h3>
+                <div class="configs-header">
+                    <h3>Saved Model Configurations</h3>
+                    <div class="sort-controls">
+                        <label for="sort-select">Sort:</label>
+                        <select id="sort-select">
+                            <option value="created_desc">Newest</option>
+                            <option value="created_asc">Oldest</option>
+                            <option value="home_mae_asc">Home MAE ↑</option>
+                            <option value="home_mae_desc">Home MAE ↓</option>
+                            <option value="away_mae_asc">Away MAE ↑</option>
+                            <option value="away_mae_desc">Away MAE ↓</option>
+                            <option value="diff_mae_asc">Margin MAE ↑</option>
+                            <option value="diff_mae_desc">Margin MAE ↓</option>
+                            <option value="diff_r2_desc">Margin R² ↑</option>
+                            <option value="diff_r2_asc">Margin R² ↓</option>
+                            <option value="features_desc">Features ↓</option>
+                            <option value="features_asc">Features ↑</option>
+                        </select>
+                    </div>
+                </div>
                 <div id="configs-list" class="configs-list">
                     <div class="loading-configs">Loading configurations...</div>
                 </div>
             </div>
             
-            <!-- Training Results Section -->
-            <div class="training-section">
-                <h3>Training Results</h3>
-                <div id="training-status" class="training-status" style="display: none;">
-                    <div class="spinner"></div>
-                    <span>Training model...</span>
-                </div>
-                <div id="training-results" class="training-results" style="display: none;">
-                    <!-- Results will be populated here -->
-                </div>
-                <div id="training-error" class="training-error" style="display: none;">
-                    <!-- Errors will be shown here -->
-                </div>
-            </div>
         </div>
     </div>
 </div>
 
 <style>
 .model-config-container {
-    max-width: 1400px;
+    max-width: 100%;
+    width: 100%;
     margin: 0 auto;
-    padding: 20px;
+    padding: 10px;
 }
 
 .config-layout {
     display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 30px;
+    grid-template-columns: 25% 75%;
+    gap: 15px;
+    min-height: 600px;
+    height: calc(100vh - 60px);
 }
 
 .config-panel {
-    background: white;
-    padding: 25px;
+    background: #f9f9f9;
+    padding: 12px;
     border-radius: 8px;
     box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-    max-height: calc(100vh - 140px);
+    max-height: calc(100vh - 60px);
     overflow-y: auto;
     overflow-x: hidden;
     display: flex;
     flex-direction: column;
+    height: 100%;
 }
 
 .config-panel::-webkit-scrollbar {
@@ -228,12 +253,14 @@
 
 .results-panel {
     background: white;
-    padding: 25px;
+    padding: 12px;
     border-radius: 8px;
     box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-    max-height: calc(100vh - 140px);
-    overflow-y: auto;
-    overflow-x: hidden;
+    max-height: calc(100vh - 60px);
+    overflow: hidden;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
 }
 
 .results-panel::-webkit-scrollbar {
@@ -255,9 +282,9 @@
 }
 
 .config-section {
-    margin-bottom: 25px;
-    padding-bottom: 20px;
-    border-bottom: 1px solid #eee;
+    margin-bottom: 12px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid #ddd;
 }
 
 .config-section:last-child {
@@ -266,9 +293,9 @@
 
 .config-section h3 {
     margin-top: 0;
-    margin-bottom: 15px;
+    margin-bottom: 8px;
     color: #333;
-    font-size: 18px;
+    font-size: 1em;
     display: flex;
     align-items: center;
 }
@@ -276,7 +303,7 @@
 .checkbox-group, .radio-group {
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: 6px;
 }
 
 .checkbox-group label, .radio-group label {
@@ -288,6 +315,45 @@
 .checkbox-group input[type="checkbox"],
 .radio-group input[type="radio"] {
     margin-right: 8px;
+}
+
+.training-status {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 15px;
+    background: #e3f2fd;
+    border-radius: 8px;
+    margin-top: 15px;
+    color: #1976d2;
+}
+
+.training-results {
+    padding: 15px;
+    background: #e8f5e9;
+    border-radius: 8px;
+    margin-top: 15px;
+}
+
+.training-error {
+    padding: 15px;
+    background: #ffebee;
+    border-radius: 8px;
+    margin-top: 15px;
+    color: #c62828;
+}
+
+.spinner {
+    width: 20px;
+    height: 20px;
+    border: 3px solid #bbdefb;
+    border-top-color: #1976d2;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
 }
 
 .train-btn, .save-btn {
@@ -311,83 +377,15 @@
     cursor: not-allowed;
 }
 
-.training-status {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 20px;
-    background: #f5f5f5;
-    border-radius: 4px;
-}
-
-.spinner {
-    width: 20px;
-    height: 20px;
-    border: 3px solid #f3f3f3;
-    border-top: 3px solid #667eea;
-    border-radius: 50%;
-    animation: spin 1s linear infinite;
-}
-
-@keyframes spin {
-    0% { transform: rotate(0deg); }
-    100% { transform: rotate(360deg); }
-}
-
-.training-results {
-    margin-top: 20px;
-}
-
-.metrics-grid {
-    display: grid;
-    grid-template-columns: repeat(2, 1fr);
-    gap: 15px;
-    margin-top: 15px;
-}
-
-.metric-card {
-    background: #f9f9f9;
-    padding: 15px;
-    border-radius: 4px;
-    border-left: 4px solid #667eea;
-}
-
-.metric-card h4 {
-    margin: 0 0 10px 0;
-    color: #333;
-    font-size: 14px;
-    text-transform: uppercase;
-}
-
-.metric-value {
-    font-size: 24px;
-    font-weight: bold;
-    color: #667eea;
-}
-
-.metric-label {
-    font-size: 12px;
-    color: #666;
-    margin-top: 5px;
-}
-
-.training-error {
-    padding: 15px;
-    background: #fee;
-    border: 1px solid #fcc;
-    border-radius: 4px;
-    color: #c33;
-}
-
 /* Feature Sets Styling */
 .feature-sets-container {
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: 6px;
     max-height: 600px;
     overflow-y: auto;
     overflow-x: hidden;
-    padding: 10px;
+    padding: 6px;
     background: #fafafa;
     border-radius: 6px;
     border: 1px solid #e0e0e0;
@@ -431,7 +429,7 @@
 .feature-set-header {
     display: flex;
     align-items: center;
-    padding: 12px 15px;
+    padding: 8px 10px;
     user-select: none;
     background: linear-gradient(to right, #f8f9fa 0%, #ffffff 100%);
     border-bottom: 1px solid #e8e8e8;
@@ -508,13 +506,13 @@
 }
 
 .feature-list {
-    padding: 12px 15px 15px 50px;
+    padding: 8px 10px 10px 40px;
     max-height: 400px;
     overflow-y: auto;
     overflow-x: hidden;
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 4px;
     background: #fafafa;
     border-top: 1px solid #e8e8e8;
     flex-shrink: 0;
@@ -542,9 +540,9 @@
 .feature-item {
     display: flex;
     align-items: center;
-    padding: 8px 10px;
+    padding: 4px 8px;
     cursor: pointer;
-    font-size: 0.9em;
+    font-size: 0.85em;
     border-radius: 4px;
     transition: all 0.15s;
     background: white;
@@ -575,24 +573,92 @@
     letter-spacing: 0.3px;
 }
 
+/* Unavailable features (not in MASTER_TRAINING.csv) */
+.feature-unavailable {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.feature-unavailable:hover {
+    background: transparent;
+    transform: none;
+    box-shadow: none;
+}
+
+.feature-unavailable .feature-checkbox {
+    cursor: not-allowed;
+}
+
+.feature-unavailable .feature-name {
+    color: #999;
+    text-decoration: line-through;
+}
+
+.feature-unavailable-badge {
+    margin-left: 6px;
+    color: #d9534f;
+    font-size: 0.9em;
+    cursor: help;
+}
+
 /* Configs Section Styles */
 .configs-section {
-    margin-bottom: 30px;
-    padding-bottom: 30px;
-    border-bottom: 2px solid #e8e8e8;
+    margin-bottom: 0;
+    padding-bottom: 0;
+    border-bottom: none;
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+}
+
+.configs-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+    flex-shrink: 0;
+}
+
+.configs-header h3 {
+    margin: 0;
+}
+
+.sort-controls {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.85em;
+}
+
+.sort-controls label {
+    color: #666;
+}
+
+.sort-controls select {
+    padding: 4px 8px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    background: white;
+    font-size: 0.9em;
+    cursor: pointer;
+}
+
+.sort-controls select:hover {
+    border-color: #667eea;
 }
 
 .configs-list {
-    max-height: 400px;
+    flex: 1;
     overflow-y: auto;
+    min-height: 0;
 }
 
 .config-item {
     background: white;
     border: 2px solid #e8e8e8;
-    border-radius: 8px;
-    padding: 15px;
-    margin-bottom: 12px;
+    border-radius: 6px;
+    padding: 10px;
+    margin-bottom: 8px;
     cursor: pointer;
     transition: all 0.2s;
 }
@@ -613,7 +679,7 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: 10px;
+    margin-bottom: 6px;
 }
 
 .config-item-name {
@@ -643,11 +709,11 @@
 
 .config-item-meta {
     display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 10px;
-    font-size: 0.9em;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 8px;
+    font-size: 0.85em;
     color: #666;
-    margin-top: 10px;
+    margin-top: 6px;
 }
 
 .config-item-metric {
@@ -683,7 +749,8 @@
     margin-top: 10px;
 }
 
-.config-expand-btn {
+.config-expand-btn,
+.config-copy-btn {
     background: none;
     border: none;
     cursor: pointer;
@@ -692,12 +759,27 @@
     align-items: center;
     justify-content: center;
     color: #667eea;
-    transition: transform 0.2s;
+    transition: all 0.2s;
     border-radius: 4px;
 }
 
-.config-expand-btn:hover {
+.config-expand-btn:hover,
+.config-copy-btn:hover {
     background: rgba(102, 126, 234, 0.1);
+}
+
+.config-copy-btn.copied {
+    color: #28a745;
+}
+
+.config-copy-btn.copied svg {
+    animation: copyPulse 0.3s ease;
+}
+
+@keyframes copyPulse {
+    0% { transform: scale(1); }
+    50% { transform: scale(1.2); }
+    100% { transform: scale(1); }
 }
 
 .config-expand-btn svg {
@@ -727,7 +809,7 @@
 }
 
 .config-details-section {
-    margin-bottom: 20px;
+    margin-bottom: 15px;
 }
 
 .config-details-section:last-child {
@@ -735,8 +817,8 @@
 }
 
 .config-details-section h4 {
-    margin: 0 0 10px 0;
-    font-size: 0.95em;
+    margin: 0 0 8px 0;
+    font-size: 0.9em;
     font-weight: 600;
     color: #667eea;
     text-transform: uppercase;
@@ -746,13 +828,13 @@
 .config-details-grid {
     display: grid;
     grid-template-columns: 1fr;
-    gap: 8px;
+    gap: 6px;
 }
 
 .config-detail-item {
     display: flex;
     flex-direction: column;
-    padding: 8px 12px;
+    padding: 6px 10px;
     background: #f8f9fa;
     border-radius: 4px;
     font-size: 0.9em;
@@ -907,6 +989,95 @@
     padding: 6px 12px;
     font-size: 12px;
 }
+
+/* Feature Rankings Styles */
+.ranking-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    cursor: pointer;
+}
+
+.ranking-expand-btn {
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #667eea;
+    transition: transform 0.2s;
+    border-radius: 4px;
+}
+
+.ranking-expand-btn:hover {
+    background: rgba(102, 126, 234, 0.1);
+}
+
+.ranking-expand-btn.expanded svg {
+    transform: rotate(180deg);
+}
+
+.feature-rankings-list {
+    max-height: 350px;
+    overflow-y: auto;
+    background: #f8f9fa;
+    border-radius: 4px;
+    padding: 8px;
+    margin-top: 8px;
+}
+
+.rankings-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.8em;
+}
+
+.rankings-table th {
+    text-align: left;
+    padding: 6px 8px;
+    background: #e9ecef;
+    border-bottom: 2px solid #dee2e6;
+    font-weight: 600;
+    color: #495057;
+}
+
+.rankings-table td {
+    padding: 4px 8px;
+    border-bottom: 1px solid #e9ecef;
+}
+
+.rankings-table tr:hover {
+    background: #e9ecef;
+}
+
+.rankings-table tr.positive .coef-value {
+    color: #28a745;
+}
+
+.rankings-table tr.negative .coef-value {
+    color: #dc3545;
+}
+
+.rankings-table .feature-name {
+    font-family: 'Courier New', 'Monaco', monospace;
+    font-size: 0.9em;
+    word-break: break-all;
+}
+
+.rankings-table .coef-value {
+    font-family: 'Courier New', 'Monaco', monospace;
+    font-weight: 600;
+    text-align: right;
+}
+
+.rankings-table .more-features {
+    text-align: center;
+    color: #6c757d;
+    font-style: italic;
+    padding: 10px;
+}
 </style>
 
 <script>
@@ -918,18 +1089,70 @@ document.addEventListener('DOMContentLoaded', function() {
     const trainingResults = document.getElementById('training-results');
     const trainingError = document.getElementById('training-error');
     const configsList = document.getElementById('configs-list');
-    
+    const sortSelect = document.getElementById('sort-select');
+
+    // Store configs for sorting
+    let allConfigs = [];
+
+    // Sort configs based on selected option
+    function sortConfigs(configs, sortBy) {
+        const sorted = [...configs];
+        sorted.sort((a, b) => {
+            const metricsA = a.metrics || {};
+            const metricsB = b.metrics || {};
+            switch(sortBy) {
+                case 'created_desc':
+                    return new Date(b.created_at || 0) - new Date(a.created_at || 0);
+                case 'created_asc':
+                    return new Date(a.created_at || 0) - new Date(b.created_at || 0);
+                case 'home_mae_asc':
+                    return (metricsA.home_mae || 999) - (metricsB.home_mae || 999);
+                case 'home_mae_desc':
+                    return (metricsB.home_mae || 0) - (metricsA.home_mae || 0);
+                case 'away_mae_asc':
+                    return (metricsA.away_mae || 999) - (metricsB.away_mae || 999);
+                case 'away_mae_desc':
+                    return (metricsB.away_mae || 0) - (metricsA.away_mae || 0);
+                case 'diff_mae_asc':
+                    return (metricsA.diff_mae || 999) - (metricsB.diff_mae || 999);
+                case 'diff_mae_desc':
+                    return (metricsB.diff_mae || 0) - (metricsA.diff_mae || 0);
+                case 'diff_r2_desc':
+                    return (metricsB.diff_r2 || -999) - (metricsA.diff_r2 || -999);
+                case 'diff_r2_asc':
+                    return (metricsA.diff_r2 || 999) - (metricsB.diff_r2 || 999);
+                case 'features_desc':
+                    return (b.feature_count || 0) - (a.feature_count || 0);
+                case 'features_asc':
+                    return (a.feature_count || 0) - (b.feature_count || 0);
+                default:
+                    return 0;
+            }
+        });
+        return sorted;
+    }
+
+    // Handle sort change
+    sortSelect.addEventListener('change', function() {
+        if (allConfigs.length > 0) {
+            const sorted = sortConfigs(allConfigs, this.value);
+            displayConfigs(sorted);
+        }
+    });
+
     // Load and display saved configs
     async function loadConfigs() {
         try {
             const response = await fetch('/api/points-model/configs');
             const data = await response.json();
-            
+
             if (!data.success) {
                 throw new Error(data.error || 'Failed to load configs');
             }
-            
-            displayConfigs(data.configs);
+
+            allConfigs = data.configs || [];
+            const sorted = sortConfigs(allConfigs, sortSelect.value);
+            displayConfigs(sorted);
         } catch (error) {
             console.error('Error loading configs:', error);
             configsList.innerHTML = `<div class="no-configs">Error loading configurations: ${error.message}</div>`;
@@ -971,6 +1194,12 @@ document.addEventListener('DOMContentLoaded', function() {
                         <div class="config-item-name">${name}</div>
                         <div style="display: flex; align-items: center; gap: 10px;">
                             ${isSelected ? '<span class="config-item-badge">Selected</span>' : ''}
+                            <button class="config-copy-btn" data-config-id="${config._id}" aria-label="Copy config info" title="Copy config info">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                    <rect x="9" y="9" width="13" height="13" rx="2" stroke="currentColor" stroke-width="2"/>
+                                    <path d="M5 15H4C2.89543 15 2 14.1046 2 13V4C2 2.89543 2.89543 2 4 2H13C14.1046 2 15 2.89543 15 4V5" stroke="currentColor" stroke-width="2"/>
+                                </svg>
+                            </button>
                             <button class="config-expand-btn" data-config-id="${config._id}" aria-label="Expand details">
                                 <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
                                     <path d="M8 4L4 8L12 8L8 4Z" fill="currentColor"/>
@@ -994,6 +1223,14 @@ document.addEventListener('DOMContentLoaded', function() {
                         <div class="config-item-metric">
                             <span class="config-item-metric-label">Away MAE</span>
                             <span class="config-item-metric-value">${metrics.away_mae ? metrics.away_mae.toFixed(2) : 'N/A'}</span>
+                        </div>
+                        <div class="config-item-metric">
+                            <span class="config-item-metric-label">Margin MAE</span>
+                            <span class="config-item-metric-value">${metrics.diff_mae ? metrics.diff_mae.toFixed(2) : 'N/A'}</span>
+                        </div>
+                        <div class="config-item-metric">
+                            <span class="config-item-metric-label">Margin R²</span>
+                            <span class="config-item-metric-value">${metrics.diff_r2 ? metrics.diff_r2.toFixed(4) : 'N/A'}</span>
                         </div>
                     </div>
                     <div class="config-item-details" id="details-${config._id}" style="display: none;">
@@ -1093,6 +1330,93 @@ document.addEventListener('DOMContentLoaded', function() {
                                 ${features.length > 0 ? features.map(f => `<span class="config-feature-tag">${f}</span>`).join('') : '<span class="config-no-features">No features specified</span>'}
                             </div>
                         </div>
+                        ${config.home_feature_rankings && config.home_feature_rankings.length > 0 ? `
+                        <div class="config-details-section">
+                            <h4 class="ranking-header" data-target="home-rankings-${config._id}">
+                                Home Model Feature Rankings (${config.home_feature_rankings.length})
+                                <button type="button" class="ranking-expand-btn" data-target="home-rankings-${config._id}">
+                                    <svg width="12" height="12" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                        <path d="M6 3L1 8L11 8L6 3Z" fill="currentColor"/>
+                                    </svg>
+                                </button>
+                            </h4>
+                            <div class="feature-rankings-list" id="home-rankings-${config._id}" style="display: none;">
+                                <table class="rankings-table">
+                                    <thead>
+                                        <tr><th>Rank</th><th>Feature</th><th>Coefficient</th></tr>
+                                    </thead>
+                                    <tbody>
+                                        ${config.home_feature_rankings.slice(0, 50).map((r, idx) => `
+                                            <tr class="${r[1] >= 0 ? 'positive' : 'negative'}">
+                                                <td>${idx + 1}</td>
+                                                <td class="feature-name">${r[0]}</td>
+                                                <td class="coef-value">${r[1].toFixed(4)}</td>
+                                            </tr>
+                                        `).join('')}
+                                        ${config.home_feature_rankings.length > 50 ? `<tr><td colspan="3" class="more-features">... and ${config.home_feature_rankings.length - 50} more features</td></tr>` : ''}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                        ` : ''}
+                        ${config.away_feature_rankings && config.away_feature_rankings.length > 0 ? `
+                        <div class="config-details-section">
+                            <h4 class="ranking-header" data-target="away-rankings-${config._id}">
+                                Away Model Feature Rankings (${config.away_feature_rankings.length})
+                                <button type="button" class="ranking-expand-btn" data-target="away-rankings-${config._id}">
+                                    <svg width="12" height="12" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                        <path d="M6 3L1 8L11 8L6 3Z" fill="currentColor"/>
+                                    </svg>
+                                </button>
+                            </h4>
+                            <div class="feature-rankings-list" id="away-rankings-${config._id}" style="display: none;">
+                                <table class="rankings-table">
+                                    <thead>
+                                        <tr><th>Rank</th><th>Feature</th><th>Coefficient</th></tr>
+                                    </thead>
+                                    <tbody>
+                                        ${config.away_feature_rankings.slice(0, 50).map((r, idx) => `
+                                            <tr class="${r[1] >= 0 ? 'positive' : 'negative'}">
+                                                <td>${idx + 1}</td>
+                                                <td class="feature-name">${r[0]}</td>
+                                                <td class="coef-value">${r[1].toFixed(4)}</td>
+                                            </tr>
+                                        `).join('')}
+                                        ${config.away_feature_rankings.length > 50 ? `<tr><td colspan="3" class="more-features">... and ${config.away_feature_rankings.length - 50} more features</td></tr>` : ''}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                        ` : ''}
+                        ${config.margin_feature_rankings && config.margin_feature_rankings.length > 0 ? `
+                        <div class="config-details-section">
+                            <h4 class="ranking-header" data-target="margin-rankings-${config._id}">
+                                Margin Model Feature Rankings (${config.margin_feature_rankings.length})
+                                <button type="button" class="ranking-expand-btn" data-target="margin-rankings-${config._id}">
+                                    <svg width="12" height="12" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                        <path d="M6 3L1 8L11 8L6 3Z" fill="currentColor"/>
+                                    </svg>
+                                </button>
+                            </h4>
+                            <div class="feature-rankings-list" id="margin-rankings-${config._id}" style="display: none;">
+                                <table class="rankings-table">
+                                    <thead>
+                                        <tr><th>Rank</th><th>Feature</th><th>Coefficient</th></tr>
+                                    </thead>
+                                    <tbody>
+                                        ${config.margin_feature_rankings.slice(0, 50).map((r, idx) => `
+                                            <tr class="${r[1] >= 0 ? 'positive' : 'negative'}">
+                                                <td>${idx + 1}</td>
+                                                <td class="feature-name">${r[0]}</td>
+                                                <td class="coef-value">${r[1].toFixed(4)}</td>
+                                            </tr>
+                                        `).join('')}
+                                        ${config.margin_feature_rankings.length > 50 ? `<tr><td colspan="3" class="more-features">... and ${config.margin_feature_rankings.length - 50} more features</td></tr>` : ''}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                        ` : ''}
                         ${config.model_path ? `
                         <div class="config-details-section">
                             <h4>Model Files</h4>
@@ -1142,11 +1466,51 @@ document.addEventListener('DOMContentLoaded', function() {
                 if (e.target.closest('.config-expand-btn')) {
                     return; // Don't select if clicking expand button
                 }
+                if (e.target.closest('.ranking-expand-btn') || e.target.closest('.ranking-header')) {
+                    return; // Don't select if clicking ranking expand button
+                }
                 const configId = this.dataset.configId;
                 await selectConfig(configId);
             });
         });
-        
+
+        // Add click handlers for ranking expand buttons
+        document.querySelectorAll('.ranking-expand-btn').forEach(btn => {
+            btn.addEventListener('click', function(e) {
+                e.stopPropagation();
+                const targetId = this.getAttribute('data-target');
+                const rankingsList = document.getElementById(targetId);
+                if (rankingsList) {
+                    const isExpanded = rankingsList.style.display !== 'none';
+                    rankingsList.style.display = isExpanded ? 'none' : 'block';
+                    this.classList.toggle('expanded', !isExpanded);
+                }
+            });
+        });
+
+        // Also allow clicking on the header text to expand
+        document.querySelectorAll('.ranking-header').forEach(header => {
+            header.addEventListener('click', function(e) {
+                e.stopPropagation();
+                const btn = this.querySelector('.ranking-expand-btn');
+                if (btn) {
+                    btn.click();
+                }
+            });
+        });
+
+        // Add click handlers for copy buttons
+        document.querySelectorAll('.config-copy-btn').forEach(btn => {
+            btn.addEventListener('click', function(e) {
+                e.stopPropagation();
+                const configId = this.getAttribute('data-config-id');
+                const config = configs.find(c => c._id === configId);
+                if (config) {
+                    copyConfigToClipboard(config, this);
+                }
+            });
+        });
+
         // After displaying configs, check if any is selected and load it into the form
         const selectedConfig = configs.find(c => c.selected === true);
         if (selectedConfig) {
@@ -1163,16 +1527,16 @@ document.addEventListener('DOMContentLoaded', function() {
                 },
                 body: JSON.stringify({ config_id: configId })
             });
-            
+
             const data = await response.json();
-            
+
             if (!data.success) {
                 throw new Error(data.error || 'Failed to select config');
             }
-            
+
             // Reload configs to update selected state
             await loadConfigs();
-            
+
             // Load the selected config into the form
             if (data.selected) {
                 await loadConfigIntoForm(configId);
@@ -1182,7 +1546,132 @@ document.addEventListener('DOMContentLoaded', function() {
             alert(`Error selecting configuration: ${error.message}`);
         }
     }
-    
+
+    function copyConfigToClipboard(config, button) {
+        const metrics = config.metrics || {};
+        const trainingStats = config.training_stats || {};
+        const modelParams = config.model_params || {};
+        const features = config.features || [];
+        const trainedAt = config.trained_at ? new Date(config.trained_at).toLocaleString() : 'Unknown';
+        const updatedAt = config.updated_at ? new Date(config.updated_at).toLocaleString() : 'Unknown';
+
+        let text = `=== Points Regression Model Configuration ===\n\n`;
+        text += `Name: ${config.name || 'Unnamed'}\n`;
+        text += `Model Type: ${config.model_type || 'Unknown'}${config.best_alpha ? ` (alpha=${config.best_alpha})` : ''}\n`;
+        text += `Feature Count: ${config.feature_count || features.length}\n`;
+        text += `Selected: ${config.selected ? 'Yes' : 'No'}\n\n`;
+
+        text += `--- Metrics ---\n`;
+        text += `Home Points:\n`;
+        text += `  MAE: ${metrics.home_mae ? metrics.home_mae.toFixed(4) : 'N/A'}\n`;
+        text += `  RMSE: ${metrics.home_rmse ? metrics.home_rmse.toFixed(4) : 'N/A'}\n`;
+        text += `  R²: ${metrics.home_r2 ? metrics.home_r2.toFixed(6) : 'N/A'}\n`;
+        text += `  MAPE: ${metrics.home_mape ? metrics.home_mape.toFixed(4) : 'N/A'}%\n\n`;
+
+        text += `Away Points:\n`;
+        text += `  MAE: ${metrics.away_mae ? metrics.away_mae.toFixed(4) : 'N/A'}\n`;
+        text += `  RMSE: ${metrics.away_rmse ? metrics.away_rmse.toFixed(4) : 'N/A'}\n`;
+        text += `  R²: ${metrics.away_r2 ? metrics.away_r2.toFixed(6) : 'N/A'}\n`;
+        text += `  MAPE: ${metrics.away_mape ? metrics.away_mape.toFixed(4) : 'N/A'}%\n\n`;
+
+        text += `Total Points:\n`;
+        text += `  MAE: ${metrics.total_mae ? metrics.total_mae.toFixed(4) : 'N/A'}\n`;
+        text += `  RMSE: ${metrics.total_rmse ? metrics.total_rmse.toFixed(4) : 'N/A'}\n`;
+        text += `  R²: ${metrics.total_r2 ? metrics.total_r2.toFixed(6) : 'N/A'}\n\n`;
+
+        text += `Point Differential:\n`;
+        text += `  MAE: ${metrics.diff_mae ? metrics.diff_mae.toFixed(4) : 'N/A'}\n`;
+        text += `  RMSE: ${metrics.diff_rmse ? metrics.diff_rmse.toFixed(4) : 'N/A'}\n`;
+        text += `  R²: ${metrics.diff_r2 ? metrics.diff_r2.toFixed(6) : 'N/A'}\n\n`;
+
+        text += `--- Training Stats ---\n`;
+        text += `Samples: ${trainingStats.n_samples || 'N/A'}\n`;
+        text += `Features: ${trainingStats.n_features || config.feature_count || 'N/A'}\n`;
+        text += `Trained At: ${trainedAt}\n`;
+        text += `Updated At: ${updatedAt}\n\n`;
+
+        if (Object.keys(modelParams).length > 0) {
+            text += `--- Model Parameters ---\n`;
+            Object.entries(modelParams).forEach(([key, value]) => {
+                text += `${key}: ${value}\n`;
+            });
+            text += `\n`;
+        }
+
+        if (config.use_time_calibration) {
+            text += `--- Time-Based Calibration ---\n`;
+            text += `Enabled: Yes\n`;
+            if (config.calibration_method) text += `Method: ${config.calibration_method}\n`;
+            if (config.begin_year != null) text += `Begin Year: ${config.begin_year}\n`;
+            if (config.calibration_years) text += `Calibration Years: ${Array.isArray(config.calibration_years) ? config.calibration_years.join(', ') : config.calibration_years}\n`;
+            if (config.evaluation_year != null) text += `Evaluation Year: ${config.evaluation_year}\n`;
+            text += `\n`;
+        }
+
+        // Feature Rankings
+        if (config.home_feature_rankings && config.home_feature_rankings.length > 0) {
+            text += `--- Home Model Feature Rankings (Top 20) ---\n`;
+            config.home_feature_rankings.slice(0, 20).forEach((r, idx) => {
+                text += `${(idx + 1).toString().padStart(2, ' ')}. ${r[0]}: ${r[1].toFixed(6)}\n`;
+            });
+            if (config.home_feature_rankings.length > 20) {
+                text += `... and ${config.home_feature_rankings.length - 20} more features\n`;
+            }
+            text += `\n`;
+        }
+
+        if (config.away_feature_rankings && config.away_feature_rankings.length > 0) {
+            text += `--- Away Model Feature Rankings (Top 20) ---\n`;
+            config.away_feature_rankings.slice(0, 20).forEach((r, idx) => {
+                text += `${(idx + 1).toString().padStart(2, ' ')}. ${r[0]}: ${r[1].toFixed(6)}\n`;
+            });
+            if (config.away_feature_rankings.length > 20) {
+                text += `... and ${config.away_feature_rankings.length - 20} more features\n`;
+            }
+            text += `\n`;
+        }
+
+        if (config.margin_feature_rankings && config.margin_feature_rankings.length > 0) {
+            text += `--- Margin Model Feature Rankings (Top 20) ---\n`;
+            config.margin_feature_rankings.slice(0, 20).forEach((r, idx) => {
+                text += `${(idx + 1).toString().padStart(2, ' ')}. ${r[0]}: ${r[1].toFixed(6)}\n`;
+            });
+            if (config.margin_feature_rankings.length > 20) {
+                text += `... and ${config.margin_feature_rankings.length - 20} more features\n`;
+            }
+            text += `\n`;
+        }
+
+        text += `--- Features (${features.length}) ---\n`;
+        if (features.length > 0) {
+            features.forEach(f => {
+                text += `${f}\n`;
+            });
+        } else {
+            text += `No features specified\n`;
+        }
+
+        if (config.model_path) {
+            text += `\n--- Model Files ---\n`;
+            text += `Model Path: ${config.model_path}\n`;
+            if (config.report_path) {
+                text += `Report Path: ${config.report_path}\n`;
+            }
+        }
+
+        // Copy to clipboard
+        navigator.clipboard.writeText(text).then(() => {
+            // Visual feedback
+            button.classList.add('copied');
+            setTimeout(() => {
+                button.classList.remove('copied');
+            }, 1500);
+        }).catch(err => {
+            console.error('Failed to copy:', err);
+            alert('Failed to copy to clipboard');
+        });
+    }
+
     // Load configs on page load
     loadConfigs();
     
