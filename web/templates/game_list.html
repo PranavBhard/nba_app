@@ -2740,6 +2740,75 @@
     border: 2px dashed #2196f3;
 }
 
+.roster-search-wrapper {
+    position: relative;
+    margin: 4px auto 8px;
+    width: 50%;
+}
+.roster-search-input {
+    width: 100%;
+    height: 28px;
+    padding: 0 8px;
+    font-size: 12px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    outline: none;
+    box-sizing: border-box;
+}
+.roster-search-input:focus {
+    border-color: #2196f3;
+}
+.roster-search-results {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    width: 100%;
+    max-height: 240px;
+    overflow-y: auto;
+    background: white;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    z-index: 20;
+    display: none;
+}
+.roster-search-results.active {
+    display: block;
+}
+.roster-search-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 8px;
+    cursor: pointer;
+    font-size: 12px;
+}
+.roster-search-item:hover,
+.roster-search-item.active {
+    background: #f0f0f0;
+}
+.roster-search-item img {
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    object-fit: cover;
+    background: #eee;
+}
+.roster-search-item .search-player-info {
+    flex: 1;
+    min-width: 0;
+}
+.roster-search-item .search-player-name {
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.roster-search-item .search-player-meta {
+    font-size: 10px;
+    color: #888;
+}
+
 .game-detail-footer {
     display: flex;
     justify-content: center;
@@ -3123,8 +3192,8 @@ function renderGameDetail(data) {
 
     if (data.last_prediction) {
         const homeProb = data.last_prediction.home_win_prob;
-        const homePredScore = data.last_prediction.home_pred_score;
-        const awayPredScore = data.last_prediction.away_pred_score;
+        const homePredScore = data.last_prediction.home_points_pred;
+        const awayPredScore = data.last_prediction.away_points_pred;
         if (homeProb != null) {
             // Determine favored team
             const homeFavored = homeProb >= 50;
@@ -3223,9 +3292,18 @@ function renderGameDetail(data) {
 
     // Rebuild body
     const body = document.querySelector('.game-detail-body');
+
     body.innerHTML = `
         <div class="team-roster-panel away-panel">
             <h3 style="color:#${data.away_team_color}">${data.away_team}</h3>
+            <div class="roster-search-wrapper">
+                <input type="text" class="roster-search-input"
+                       id="away-roster-search"
+                       placeholder="Add player..."
+                       data-side="away" data-team="${awayTeamId}"
+                       autocomplete="off">
+                <div class="roster-search-results" id="away-search-results"></div>
+            </div>
             <div class="roster-columns">
                 <div class="roster-column starters-column" data-column="starters" data-team="away" style="background: ${awayStartersBg};">
                     <h4 style="border-color: #${data.away_team_color}; color: #${data.away_team_color};">Starters</h4>
@@ -3243,6 +3321,14 @@ function renderGameDetail(data) {
         </div>
         <div class="team-roster-panel home-panel">
             <h3 style="color:#${data.home_team_color}">${data.home_team}</h3>
+            <div class="roster-search-wrapper">
+                <input type="text" class="roster-search-input"
+                       id="home-roster-search"
+                       placeholder="Add player..."
+                       data-side="home" data-team="${homeTeamId}"
+                       autocomplete="off">
+                <div class="roster-search-results" id="home-search-results"></div>
+            </div>
             <div class="roster-columns">
                 <div class="roster-column starters-column" data-column="starters" data-team="home" style="background: ${homeStartersBg};">
                     <h4 style="border-color: #${data.home_team_color}; color: #${data.home_team_color};">Starters</h4>
@@ -3261,11 +3347,14 @@ function renderGameDetail(data) {
     `;
 
     // Render players - pass internal team IDs for API calls
-    renderPlayers('away', data.away_team_id || data.away_team, data.away_players);
-    renderPlayers('home', data.home_team_id || data.home_team, data.home_players);
+    renderPlayers('away', awayTeamId, data.away_players);
+    renderPlayers('home', homeTeamId, data.home_players);
 
     // Setup drag and drop
     setupDragAndDrop();
+
+    // Setup roster search
+    initRosterSearch(data);
 
     // Fetch PER for all players in the background
     fetchAllPlayersPER(data);
@@ -3559,6 +3648,148 @@ function sortColumnCards(column) {
     cards.forEach(card => playerList.appendChild(card));
 }
 
+// ========== Roster Search ==========
+let rosterSearchTimers = {};
+
+function initRosterSearch(data) {
+    ['away', 'home'].forEach(side => {
+        const input = document.getElementById(`${side}-roster-search`);
+        if (!input) return;
+
+        input.addEventListener('input', () => {
+            clearTimeout(rosterSearchTimers[side]);
+            rosterSearchTimers[side] = setTimeout(() => {
+                handleRosterSearch(side, input.value.trim(), data.season, data.game_date);
+            }, 250);
+        });
+
+        input.addEventListener('keydown', (e) => {
+            const results = document.getElementById(`${side}-search-results`);
+            const items = results.querySelectorAll('.roster-search-item');
+            let activeIdx = Array.from(items).findIndex(i => i.classList.contains('active'));
+
+            if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                if (activeIdx >= 0) items[activeIdx].classList.remove('active');
+                activeIdx = Math.min(activeIdx + 1, items.length - 1);
+                if (items[activeIdx]) items[activeIdx].classList.add('active');
+            } else if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                if (activeIdx >= 0) items[activeIdx].classList.remove('active');
+                activeIdx = Math.max(activeIdx - 1, 0);
+                if (items[activeIdx]) items[activeIdx].classList.add('active');
+            } else if (e.key === 'Enter') {
+                e.preventDefault();
+                const active = results.querySelector('.roster-search-item.active');
+                if (active) active.click();
+            } else if (e.key === 'Escape') {
+                results.classList.remove('active');
+                input.blur();
+            }
+        });
+    });
+
+    // Close dropdowns on outside click
+    document.addEventListener('click', (e) => {
+        if (!e.target.closest('.roster-search-wrapper')) {
+            document.querySelectorAll('.roster-search-results').forEach(r => r.classList.remove('active'));
+        }
+    });
+}
+
+async function handleRosterSearch(side, query, season, gameDate) {
+    const results = document.getElementById(`${side}-search-results`);
+    if (query.length < 2) {
+        results.classList.remove('active');
+        results.innerHTML = '';
+        return;
+    }
+
+    try {
+        const resp = await fetch(apiUrl(`/api/player-search?q=${encodeURIComponent(query)}&season=${encodeURIComponent(season)}`));
+        const players = await resp.json();
+
+        // Filter out players already on this side's roster
+        const existingIds = new Set();
+        document.querySelectorAll(`#${side}-starters .player-card, #${side}-bench .player-card, #${side}-injured .player-card`).forEach(card => {
+            existingIds.add(String(card.dataset.playerId));
+        });
+        const filtered = players.filter(p => !existingIds.has(String(p.player_id)));
+
+        if (filtered.length === 0) {
+            results.innerHTML = '<div style="padding:8px;font-size:12px;color:#999;text-align:center;">No results</div>';
+            results.classList.add('active');
+            return;
+        }
+
+        const input = document.getElementById(`${side}-roster-search`);
+        const team = input.dataset.team;
+
+        results.innerHTML = filtered.map(p => {
+            const hs = p.headshot || 'https://a.espncdn.com/combiner/i?img=/i/headshots/nophoto.png';
+            const pos = p.pos_display_name || p.pos_name || '';
+            const meta = [p.team, pos, `${p.games}g`].filter(Boolean).join(' · ');
+            return `<div class="roster-search-item" data-player='${JSON.stringify(p).replace(/'/g, "&#39;")}'>
+                <img src="${hs}" onerror="this.src='https://a.espncdn.com/combiner/i?img=/i/headshots/nophoto.png'">
+                <div class="search-player-info">
+                    <div class="search-player-name">${p.player_name}</div>
+                    <div class="search-player-meta">${meta}</div>
+                </div>
+            </div>`;
+        }).join('');
+
+        results.querySelectorAll('.roster-search-item').forEach(item => {
+            item.addEventListener('click', () => {
+                const player = JSON.parse(item.dataset.player);
+                selectSearchResult(side, team, player, season, gameDate);
+            });
+        });
+
+        results.classList.add('active');
+    } catch (err) {
+        console.error('Roster search error:', err);
+    }
+}
+
+async function selectSearchResult(side, team, player, season, gameDate) {
+    const input = document.getElementById(`${side}-roster-search`);
+    const results = document.getElementById(`${side}-search-results`);
+
+    try {
+        const resp = await fetch(apiUrl('/api/add-player-to-roster'), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                player_id: player.player_id,
+                team: team,
+                season: season,
+                game_date: gameDate
+            })
+        });
+        const data = await resp.json();
+
+        if (data.success && data.player) {
+            const benchList = document.getElementById(`${side}-bench`);
+            const card = createPlayerCard(data.player, team);
+            benchList.appendChild(card);
+
+            // Re-enable drag/drop on the new card
+            card.addEventListener('dragstart', handleDragStart);
+            card.addEventListener('dragend', handleDragEnd);
+
+            sortColumnCards(benchList.closest('.roster-column'));
+        } else {
+            console.error('Failed to add player:', data.error);
+        }
+    } catch (err) {
+        console.error('Error adding player to roster:', err);
+    }
+
+    input.value = '';
+    results.classList.remove('active');
+    results.innerHTML = '';
+}
+
 // ========== Player Detail Panel ==========
 let selectedPlayerCard = null;
 let selectedPlayerId = null;  // Track currently selected player for PER updates
@@ -3625,6 +3856,17 @@ function closePlayerPanel() {
     }
     selectedPlayerId = null;
 }
+
+// Close player panel when clicking outside it
+document.addEventListener('click', function(e) {
+    const panel = document.getElementById('player-detail-panel');
+    if (!panel || !panel.classList.contains('open')) return;
+    // If the click is inside the panel itself, ignore
+    if (panel.contains(e.target)) return;
+    // If the click is on a player card (which opens the panel), ignore
+    if (e.target.closest('.player-card')) return;
+    closePlayerPanel();
+});
 
 // Update PER in the open panel when batch PER values arrive
 function updateOpenPanelPER() {

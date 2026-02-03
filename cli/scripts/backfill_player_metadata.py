@@ -3,8 +3,8 @@
 Backfill player metadata (headshot, position) from ESPN API to players collection.
 
 This script:
-1. Gets all unique player_ids from player_stats collection
-2. Checks which players are missing headshot/position in players collection
+1. Gets player_ids from current-season rosters
+2. Finds which of those players are missing headshot or pos_name/pos_display_name
 3. Fetches metadata from ESPN API for those players
 4. Updates the players collection
 
@@ -14,6 +14,7 @@ Usage:
     python -m nba_app.cli.scripts.backfill_player_metadata cbb
     python -m nba_app.cli.scripts.backfill_player_metadata cbb --dry-run
     python -m nba_app.cli.scripts.backfill_player_metadata cbb --limit 100
+    python -m nba_app.cli.scripts.backfill_player_metadata nba --season 2024-2025
 """
 
 import argparse
@@ -33,26 +34,18 @@ from nba_app.core.mongo import Mongo
 from nba_app.core.league_config import load_league_config
 
 
-def fetch_player_from_espn(player_id: str, league_slug: str) -> dict:
+def fetch_player_from_espn(player_id: str, sport_path: str) -> dict:
     """
     Fetch player metadata from ESPN API.
 
     Args:
         player_id: ESPN player ID
-        league_slug: ESPN league slug (e.g., 'nba', 'mens-college-basketball')
+        sport_path: ESPN sport path (e.g., 'nba', 'mens-college-basketball')
 
     Returns:
         Dict with headshot, pos_name, pos_display_name (or empty dict on failure)
     """
-    # Map league to ESPN sport path
-    if league_slug == 'nba':
-        sport_path = 'basketball/nba'
-    elif league_slug == 'mens-college-basketball':
-        sport_path = 'basketball/mens-college-basketball'
-    else:
-        sport_path = f'basketball/{league_slug}'
-
-    url = f"https://site.api.espn.com/apis/common/v3/sports/{sport_path}/athletes/{player_id}"
+    url = f"https://site.api.espn.com/apis/common/v3/sports/basketball/{sport_path}/athletes/{player_id}"
 
     try:
         resp = requests.get(url, timeout=10)
@@ -88,14 +81,16 @@ def fetch_player_from_espn(player_id: str, league_slug: str) -> dict:
         return {}
 
 
-def backfill_player_metadata(league_id: str, dry_run: bool = False, limit: int = None):
+def backfill_player_metadata(league_id: str, dry_run: bool = False, limit: int = None,
+                             season: str = None):
     """
-    Backfill player metadata from ESPN API.
+    Backfill player metadata from ESPN API for players on current-season rosters.
 
     Args:
         league_id: League identifier (nba, cbb, etc.)
         dry_run: If True, only show what would be done
         limit: Max players to process (for testing)
+        season: Season to pull rosters from (default: current season)
     """
     print(f"Backfilling player metadata for league: {league_id}")
     print(f"Dry run: {dry_run}")
@@ -107,55 +102,90 @@ def backfill_player_metadata(league_id: str, dry_run: bool = False, limit: int =
     league = load_league_config(league_id)
     db = Mongo().db
 
-    # Get collection names from league config
-    player_stats_collection = league.collections.get('player_stats', 'stats_nba_players')
+    # Get collection names and ESPN config from league config
     players_collection = league.collections.get('players', 'players_nba')
-    league_slug = league.espn.get('league_slug', 'nba')
+    rosters_collection = league.collections.get('rosters', 'nba_rosters')
+    sport_path = league.espn.get('sport_path', 'nba')
 
-    print(f"Player stats collection: {player_stats_collection}")
+    # Determine season
+    if not season:
+        from nba_app.core.utils import get_season_from_date
+        from datetime import date
+        season = get_season_from_date(date.today(), league=league)
+
     print(f"Players collection: {players_collection}")
-    print(f"ESPN league slug: {league_slug}")
+    print(f"Rosters collection: {rosters_collection}")
+    print(f"Season: {season}")
+    print(f"ESPN sport path: {sport_path}")
     print()
 
-    # Step 1: Get all unique player_ids from player_stats
-    print("Step 1: Finding unique players in player_stats collection...")
+    # Step 1: Get all player_ids from current-season rosters
+    print("Step 1: Collecting player IDs from current-season rosters...")
 
-    pipeline = [
-        {'$group': {
-            '_id': '$player_id',
-            'player_name': {'$first': '$player_name'}
-        }}
-    ]
+    roster_docs = list(db[rosters_collection].find(
+        {'season': season},
+        {'roster': 1, 'team': 1}
+    ))
+    print(f"  Found {len(roster_docs)} team rosters for season {season}")
 
-    all_players = list(db[player_stats_collection].aggregate(pipeline))
-    print(f"  Found {len(all_players)} unique players in {player_stats_collection}")
+    roster_player_ids = set()
+    for doc in roster_docs:
+        for entry in doc.get('roster', []):
+            pid = entry.get('player_id')
+            if pid:
+                roster_player_ids.add(str(pid))
 
-    # Step 2: Find players missing headshot or position in players collection
-    print("\nStep 2: Checking which players need metadata...")
+    print(f"  Total unique players on rosters: {len(roster_player_ids)}")
 
-    players_to_update = []
-    for player in all_players:
-        player_id = player['_id']
+    # Step 2: Find which of those players are missing headshot or position
+    print("\nStep 2: Finding rostered players missing headshot or position...")
 
-        # Check if player exists and has metadata
-        existing = db[players_collection].find_one(
-            {'player_id': player_id},
-            {'headshot': 1, 'pos_name': 1, 'pos_display_name': 1}
-        )
+    # Query players collection for these IDs, expanding to handle int/str
+    expanded_ids = []
+    for pid in roster_player_ids:
+        expanded_ids.append(pid)
+        if pid.isdigit():
+            expanded_ids.append(int(pid))
 
-        needs_update = False
-        if not existing:
-            needs_update = True
-        elif not existing.get('headshot') or not existing.get('pos_name'):
-            needs_update = True
+    missing_query = {
+        'player_id': {'$in': expanded_ids},
+        '$or': [
+            {'headshot': {'$exists': False}},
+            {'headshot': None},
+            {'headshot': ''},
+            {'pos_name': {'$exists': False}},
+            {'pos_name': None},
+            {'pos_name': ''},
+            {'pos_display_name': {'$exists': False}},
+            {'pos_display_name': None},
+            {'pos_display_name': ''},
+        ]
+    }
 
-        if needs_update:
-            players_to_update.append({
-                'player_id': player_id,
-                'player_name': player.get('player_name', 'Unknown')
-            })
+    players_to_update = list(db[players_collection].find(
+        missing_query,
+        {'player_id': 1, 'player_name': 1, 'headshot': 1, 'pos_name': 1, 'pos_display_name': 1}
+    ))
 
-    print(f"  Found {len(players_to_update)} players needing metadata update")
+    # Also find rostered players with no entry in players collection at all
+    existing_ids = set()
+    for doc in db[players_collection].find(
+        {'player_id': {'$in': expanded_ids}},
+        {'player_id': 1}
+    ):
+        existing_ids.add(str(doc.get('player_id', '')))
+
+    missing_entirely = roster_player_ids - existing_ids
+    for pid in missing_entirely:
+        players_to_update.append({
+            'player_id': pid,
+            'player_name': 'Unknown',
+            '_new': True
+        })
+
+    print(f"  Rostered players missing metadata: {len(players_to_update)}")
+    if missing_entirely:
+        print(f"    ({len(missing_entirely)} not in players collection at all)")
 
     if limit:
         players_to_update = players_to_update[:limit]
@@ -165,38 +195,44 @@ def backfill_player_metadata(league_id: str, dry_run: bool = False, limit: int =
         print("\nNo players need updating.")
         return
 
-    # Step 3: Fetch from ESPN API and update
-    print(f"\nStep 3: Fetching metadata from ESPN API...")
+    # Step 2: Fetch from ESPN API and update
+    print(f"\nStep 2: Fetching metadata from ESPN API for {len(players_to_update)} players...")
 
     updated_count = 0
     failed_count = 0
     skipped_count = 0
 
     for i, player in enumerate(players_to_update):
-        player_id = player['player_id']
-        player_name = player['player_name']
+        player_id = player.get('player_id')
+        player_name = player.get('player_name', 'Unknown')
+
+        if not player_id:
+            skipped_count += 1
+            continue
 
         if (i + 1) % 50 == 0:
             print(f"  Progress: {i + 1}/{len(players_to_update)} ({updated_count} updated, {failed_count} failed)")
 
         if dry_run:
-            print(f"  [DRY RUN] Would fetch metadata for {player_name} ({player_id})")
+            missing = []
+            if not player.get('headshot'):
+                missing.append('headshot')
+            if not player.get('pos_name'):
+                missing.append('pos_name')
+            if not player.get('pos_display_name'):
+                missing.append('pos_display_name')
+            print(f"  [DRY RUN] Would fetch for {player_name} ({player_id}) - missing: {', '.join(missing)}")
             continue
 
         # Fetch from ESPN
-        metadata = fetch_player_from_espn(str(player_id), league_slug)
+        metadata = fetch_player_from_espn(str(player_id), sport_path)
 
         if not metadata:
             failed_count += 1
             continue
 
-        # Only update if we got useful data
-        if not metadata.get('headshot') and not metadata.get('pos_name'):
-            skipped_count += 1
-            continue
-
-        # Update players collection
-        update_data = {'player_id': player_id}
+        # Build update with only the fields we got back
+        update_data = {}
         if metadata.get('player_name'):
             update_data['player_name'] = metadata['player_name']
         if metadata.get('headshot'):
@@ -206,10 +242,13 @@ def backfill_player_metadata(league_id: str, dry_run: bool = False, limit: int =
         if metadata.get('pos_display_name'):
             update_data['pos_display_name'] = metadata['pos_display_name']
 
+        if not update_data:
+            skipped_count += 1
+            continue
+
         db[players_collection].update_one(
             {'player_id': player_id},
-            {'$set': update_data},
-            upsert=True
+            {'$set': update_data}
         )
         updated_count += 1
 
@@ -219,7 +258,7 @@ def backfill_player_metadata(league_id: str, dry_run: bool = False, limit: int =
     print(f"\nDone!")
     print(f"  Updated: {updated_count}")
     print(f"  Failed (API error): {failed_count}")
-    print(f"  Skipped (no data): {skipped_count}")
+    print(f"  Skipped (no useful data from API): {skipped_count}")
 
 
 def main():
@@ -231,10 +270,12 @@ def main():
                        help='Show what would be done without making changes')
     parser.add_argument('--limit', type=int, default=None,
                        help='Maximum number of players to process')
+    parser.add_argument('--season', type=str, default=None,
+                       help='Season to pull rosters from (default: current season)')
 
     args = parser.parse_args()
 
-    backfill_player_metadata(args.league, args.dry_run, args.limit)
+    backfill_player_metadata(args.league, args.dry_run, args.limit, args.season)
 
 
 if __name__ == '__main__':

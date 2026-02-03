@@ -177,10 +177,10 @@ def get_team_players(db, team: str, season: str, game_date: date,
         exclude_game_types = league.exclude_game_types if hasattr(league, 'exclude_game_types') else []
         stats = calculate_player_stats(db, player_id, team, season, before_date, player_stats_collection, exclude_game_types)
 
-        # Get headshot and position from roster entry or players collection
-        headshot = roster_entry.get('headshot') or player_doc.get('headshot')
-        pos_name = roster_entry.get('pos_name') or player_doc.get('pos_name')
-        pos_display_name = roster_entry.get('pos_display_name') or player_doc.get('pos_display_name')
+        # Headshot and position always come from players collection
+        headshot = player_doc.get('headshot')
+        pos_name = player_doc.get('pos_name')
+        pos_display_name = player_doc.get('pos_display_name')
 
         result.append({
             'player_id': player_id,
@@ -609,3 +609,153 @@ def get_players_per_batch(db, players: List[Dict], season: str, game_date: date,
         print(f"Error calculating batch PER: {e}")
 
     return result
+
+
+def search_players_for_roster(db, query: str, season: str,
+                              league: "LeagueConfig") -> List[Dict]:
+    """
+    Search for players eligible to add to a roster.
+
+    Aggregates player_stats to find distinct players matching the query
+    who have >1 game with minutes in this season. Enriches results with
+    headshot and position from the players collection.
+
+    Args:
+        db: MongoDB database instance
+        query: Search string (partial player name)
+        season: Season string (e.g., '2024-2025')
+        league: LeagueConfig for collection names and game type exclusions
+
+    Returns:
+        List of player dicts with player_id, player_name, team, headshot,
+        pos_name, pos_display_name, games
+    """
+    from nba_app.core.data.players import PlayerStatsRepository, PlayersRepository
+
+    if len(query) < 2:
+        return []
+
+    player_stats_repo = PlayerStatsRepository(db, league=league)
+    players_repo = PlayersRepository(db, league=league)
+
+    exclude_game_types = league.exclude_game_types if hasattr(league, 'exclude_game_types') else []
+
+    match_query = {
+        'season': season,
+        'stats.min': {'$gt': 0},
+        'player_name': {'$regex': query, '$options': 'i'}
+    }
+    if exclude_game_types:
+        match_query['game_type'] = {'$nin': exclude_game_types}
+
+    pipeline = [
+        {'$match': match_query},
+        {'$group': {
+            '_id': '$player_id',
+            'player_name': {'$first': '$player_name'},
+            'team': {'$last': '$team'},
+            'games': {'$sum': 1}
+        }},
+        {'$match': {'games': {'$gt': 1}}},
+        {'$sort': {'player_name': 1}},
+        {'$limit': 15}
+    ]
+
+    results = player_stats_repo.aggregate(pipeline)
+
+    # Enrich with headshot and position from players collection
+    player_ids = [str(r['_id']) for r in results]
+    players_details = {}
+    if player_ids:
+        for p in players_repo.find_by_ids(player_ids):
+            players_details[str(p.get('player_id', ''))] = p
+
+    response = []
+    for r in results:
+        pid = str(r['_id'])
+        details = players_details.get(pid, {})
+        response.append({
+            'player_id': pid,
+            'player_name': r['player_name'],
+            'team': r.get('team', ''),
+            'headshot': details.get('headshot'),
+            'pos_name': details.get('pos_name'),
+            'pos_display_name': details.get('pos_display_name'),
+            'games': r['games']
+        })
+
+    return response
+
+
+def add_player_to_team_roster(db, player_id: str, team: str, season: str,
+                              game_date: str, league: "LeagueConfig") -> Dict:
+    """
+    Add a player to a team's roster, removing them from any other team.
+
+    Steps:
+    1. Remove player from all other team rosters for this season
+    2. Add to target team roster (as non-starter bench player)
+    3. Update players collection team field
+    4. Build and return full player object for frontend rendering
+
+    Args:
+        db: MongoDB database instance
+        player_id: Player ID string
+        team: Target team identifier
+        season: Season string
+        game_date: Game date string (YYYY-MM-DD) for stats calculation
+        league: LeagueConfig for collection names
+
+    Returns:
+        Dict with 'success' bool and 'player' object (or 'error' string)
+    """
+    from nba_app.core.data.rosters import RostersRepository
+    from nba_app.core.data.players import PlayersRepository
+
+    rosters_repo = RostersRepository(db, league=league)
+    players_repo = PlayersRepository(db, league=league)
+
+    player_stats_collection = league.collections.get('player_stats', 'stats_nba_players')
+    exclude_game_types = league.exclude_game_types if hasattr(league, 'exclude_game_types') else []
+
+    # Remove player from all teams' rosters for this season
+    all_rosters = rosters_repo.find_by_season(season)
+    for roster_doc in all_rosters:
+        roster_team = roster_doc.get('team')
+        rosters_repo.remove_player_from_roster(roster_team, season, str(player_id))
+
+    # Add to target team roster
+    rosters_repo.add_player_to_roster(team, season, {
+        'player_id': str(player_id),
+        'starter': False
+    })
+
+    # Update players collection team field
+    players_repo.upsert_player(player_id, {
+        'player_id': player_id,
+        'team': team,
+        'last_roster_update': datetime.utcnow()
+    })
+
+    # Build full player object matching get_team_players return shape
+    player_doc = players_repo.find_by_player_id(str(player_id))
+
+    before_date = game_date or date.today().strftime('%Y-%m-%d')
+    stats = calculate_player_stats(
+        db, str(player_id), team, season, before_date,
+        player_stats_collection, exclude_game_types
+    )
+
+    player_obj = {
+        'player_id': str(player_id),
+        'player_name': player_doc.get('player_name', '') if player_doc else '',
+        'headshot': player_doc.get('headshot') if player_doc else None,
+        'pos_name': player_doc.get('pos_name') if player_doc else None,
+        'pos_display_name': player_doc.get('pos_display_name') if player_doc else None,
+        'injured': False,
+        'injury_status': player_doc.get('injury_status') if player_doc else None,
+        'starter': False,
+        'stats': stats
+    }
+
+    return {'success': True, 'player': player_obj}

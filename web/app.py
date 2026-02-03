@@ -2801,6 +2801,46 @@ def move_player(league_id=None):
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+@app.route('/<league_id>/api/player-search', methods=['GET'])
+@app.route('/api/player-search', methods=['GET'])
+def player_search(league_id=None):
+    """Search for players by name. Thin wrapper around core game_service."""
+    from nba_app.core.services.game_service import search_players_for_roster
+
+    q = request.args.get('q', '').strip()
+    season = request.args.get('season', '')
+
+    if len(q) < 2 or not season:
+        return jsonify([])
+
+    results = search_players_for_roster(db, q, season, g.league)
+    return jsonify(results)
+
+
+@app.route('/<league_id>/api/add-player-to-roster', methods=['POST'])
+@app.route('/api/add-player-to-roster', methods=['POST'])
+def add_player_to_roster(league_id=None):
+    """Add a player to a team's roster. Thin wrapper around core game_service."""
+    from nba_app.core.services.game_service import add_player_to_team_roster
+
+    data = request.json
+    player_id = data.get('player_id')
+    team = data.get('team')
+    season = data.get('season')
+    game_date_str = data.get('game_date')
+
+    if not all([player_id, team, season]):
+        return jsonify({'success': False, 'error': 'Missing required fields'}), 400
+
+    try:
+        result = add_player_to_team_roster(db, player_id, team, season, game_date_str, g.league)
+        return jsonify(result)
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
 @app.route('/<league_id>/api/remove-player', methods=['POST'])
 @app.route('/api/remove-player', methods=['POST'])
 def remove_player(league_id=None):
