@@ -7,10 +7,10 @@ running the Flask server.
 
 Usage:
   source venv/bin/activate
-  PYTHONPATH=/Users/pranav/Documents/NBA python tests/test_matchup_chat_controller_flow.py --game-id <game_id>
+  PYTHONPATH=/Users/pranav/Documents/basketball python tests/test_matchup_chat_controller_flow.py --game-id <game_id>
 
 Notes:
-- This will use MongoDB via `nba_app.core.mongo.Mongo`.
+- This will use MongoDB via `bball.mongo.Mongo`.
 - If the game does NOT already have a saved prediction in the model predictions
   collection, the PredictionService may attempt to compute and persist one.
 """
@@ -21,21 +21,19 @@ import sys
 
 
 def _ensure_pythonpath():
-    # tests/ is inside nba_app/, so parent of nba_app is one level up
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    nba_app_dir = os.path.dirname(script_dir)
-    parent = os.path.dirname(nba_app_dir)
-    if parent not in sys.path:
-        sys.path.insert(0, parent)
+    project_root = os.path.dirname(script_dir)
+    if project_root not in sys.path:
+        sys.path.insert(0, project_root)
 
 
 def main():
     _ensure_pythonpath()
 
-    from bball_app.core.mongo import Mongo
-    from bball_app.core.league_config import load_league_config
-    from bball_app.core.services.matchup_chat import Controller
-    from bball_app.core.services.matchup_chat.schemas import ControllerOptions
+    from bball.mongo import Mongo
+    from bball.league_config import load_league_config
+    from bball.services.matchup_chat import Controller
+    from bball.services.matchup_chat.schemas import ControllerOptions
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--league", default="nba")

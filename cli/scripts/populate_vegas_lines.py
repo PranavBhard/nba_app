@@ -15,7 +15,7 @@ Usage:
     ./cli/scripts/populate_vegas.sh
     # Or directly:
     source venv/bin/activate
-    PYTHONPATH=/Users/pranav/Documents/NBA python cli/scripts/populate_vegas_lines.py
+    PYTHONPATH=/Users/pranav/Documents/basketball python cli/scripts/populate_vegas_lines.py
 """
 
 import pandas as pd
@@ -24,7 +24,7 @@ from typing import Dict, List, Optional, Tuple
 import sys
 
 from pymongo import UpdateOne
-from bball_app.core.mongo import Mongo
+from bball.mongo import Mongo
 
 
 # Team abbreviation mapping: CSV (lowercase) -> DB (uppercase)
@@ -196,7 +196,7 @@ def main():
     print("=" * 60)
 
     # Load CSV
-    csv_path = '/Users/pranav/Documents/NBA/nba_2008-2025.csv'
+    csv_path = '/Users/pranav/Documents/basketball/nba_2008-2025.csv'
     print(f"\n[LOAD] Reading CSV: {csv_path}")
     df = pd.read_csv(csv_path)
     print(f"[LOAD] Loaded {len(df):,} rows")

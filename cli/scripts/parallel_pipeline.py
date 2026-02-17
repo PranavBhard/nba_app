@@ -27,10 +27,13 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 from enum import Enum
 
-# Add project to path
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Add project root to path
+script_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.dirname(os.path.dirname(script_dir))
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
 
-from bball_app.core.league_config import load_league_config, get_available_leagues, LeagueConfig
+from bball.league_config import load_league_config, get_available_leagues, LeagueConfig
 
 
 class Status(Enum):
@@ -131,7 +134,7 @@ def run_espn_pull(season: str, start_date: str, end_date: str,
     try:
         # Run the command and capture output
         # Use PYTHONUNBUFFERED to get real-time output
-        env = {**os.environ, "PYTHONPATH": "/Users/pranav/Documents/NBA", "PYTHONUNBUFFERED": "1"}
+        env = {**os.environ, "PYTHONPATH": "/Users/pranav/Documents/basketball", "PYTHONUNBUFFERED": "1"}
         process = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
@@ -305,7 +308,7 @@ def run_post_processing(state: PipelineState, league: str, dry_run: bool = False
             subprocess.run(
                 cmd,
                 cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                env={**os.environ, "PYTHONPATH": "/Users/pranav/Documents/NBA"},
+                env={**os.environ, "PYTHONPATH": "/Users/pranav/Documents/basketball"},
                 capture_output=True,
                 text=True,
                 check=True
@@ -336,7 +339,7 @@ def run_master_training(state: PipelineState, league: str, config: LeagueConfig,
             text=True,
             bufsize=1,
             cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-            env={**os.environ, "PYTHONPATH": "/Users/pranav/Documents/NBA"}
+            env={**os.environ, "PYTHONPATH": "/Users/pranav/Documents/basketball"}
         )
 
         for line in process.stdout:
@@ -371,7 +374,7 @@ def register_master_csv(league: str, dry_run: bool = False):
         subprocess.run(
             cmd,
             cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-            env={**os.environ, "PYTHONPATH": "/Users/pranav/Documents/NBA"},
+            env={**os.environ, "PYTHONPATH": "/Users/pranav/Documents/basketball"},
             capture_output=True,
             check=True
         )

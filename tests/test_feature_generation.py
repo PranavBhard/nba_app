@@ -17,7 +17,7 @@ KNOWN ISSUES:
 
 Usage:
     source venv/bin/activate
-    PYTHONPATH=/Users/pranav/Documents/NBA python tests/test_feature_generation.py
+    PYTHONPATH=/Users/pranav/Documents/basketball python tests/test_feature_generation.py
 """
 
 import sys
@@ -25,14 +25,13 @@ import os
 
 # Add project root to path
 script_dir = os.path.dirname(os.path.abspath(__file__))
-nba_app_dir = os.path.dirname(script_dir)
-project_root = os.path.dirname(nba_app_dir)
+project_root = os.path.dirname(script_dir)
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-from bball_app.core.mongo import Mongo
-from bball_app.core.stats.handler import StatHandlerV2
-from bball_app.core.models.bball_model import BballModel
+from bball.mongo import Mongo
+from bball.stats.handler import StatHandlerV2
+from bball.models.bball_model import BballModel
 
 
 def test_travel_features():
@@ -321,7 +320,7 @@ def test_populate_master_training_venue_lookup():
 
     # Simulate what populate_master_training_cols does
     # Read a few game_ids from the master CSV
-    csv_path = '/Users/pranav/Documents/NBA/master_training/MASTER_TRAINING.csv'
+    csv_path = '/Users/pranav/Documents/basketball/master_training/MASTER_TRAINING.csv'
     df = pd.read_csv(csv_path, nrows=100)
 
     # Convert to strings (the fix we applied)

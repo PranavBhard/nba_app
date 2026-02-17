@@ -5,9 +5,9 @@ Backfill conference data for teams from ESPN groups API.
 Thin CLI wrapper around core.services.espn_sync.refresh_team_conferences().
 
 Usage:
-    python -m bball_app.cli.scripts.backfill_team_conferences <league>
-    python -m bball_app.cli.scripts.backfill_team_conferences wcbb
-    python -m bball_app.cli.scripts.backfill_team_conferences cbb --dry-run
+    python -m bball.cli.scripts.backfill_team_conferences <league>
+    python -m bball.cli.scripts.backfill_team_conferences wcbb
+    python -m bball.cli.scripts.backfill_team_conferences cbb --dry-run
 """
 
 import argparse
@@ -16,14 +16,13 @@ import os
 
 # Add project root to path
 script_dir = os.path.dirname(os.path.abspath(__file__))
-nba_app_dir = os.path.dirname(os.path.dirname(script_dir))
-project_root = os.path.dirname(nba_app_dir)
+project_root = os.path.dirname(os.path.dirname(script_dir))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-from bball_app.core.mongo import Mongo
-from bball_app.core.league_config import load_league_config
-from bball_app.core.services.espn_sync import refresh_team_conferences
+from bball.mongo import Mongo
+from bball.league_config import load_league_config
+from bball.services.espn_sync import refresh_team_conferences
 
 
 def backfill_team_conferences(league_id: str, dry_run: bool = False):

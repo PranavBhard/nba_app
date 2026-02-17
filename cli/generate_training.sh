@@ -84,4 +84,4 @@ source ./setup.sh
 export PYTHONPATH=/Users/pranav/Documents/basketball
 
 # Run the training pipeline
-python -m bball_app.core.pipeline.training_pipeline "$LEAGUE" "$@"
+python -m bball.pipeline.training_pipeline "$LEAGUE" "$@"

@@ -42,4 +42,4 @@ source ./setup.sh
 export PYTHONPATH=/Users/pranav/Documents/basketball
 
 # Run the rosters pipeline
-python -m bball_app.core.pipeline.rosters_pipeline "$LEAGUE" "$@"
+python -m bball.pipeline.rosters_pipeline "$LEAGUE" "$@"

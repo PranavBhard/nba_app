@@ -56,9 +56,9 @@ def test_ensemble_training_fix():
     try:
         import sys
         import os
-        current_dir = os.path.dirname(os.path.abspath(__file__))
-        parent_dir = os.path.dirname(current_dir)
-        sys.path.insert(0, parent_dir)
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        project_root = os.path.dirname(script_dir)
+        sys.path.insert(0, project_root)
         
         from agents.tools.stacking_tool import StackingTrainer
         import inspect

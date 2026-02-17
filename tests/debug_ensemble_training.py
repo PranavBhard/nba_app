@@ -3,9 +3,13 @@
 
 import sys
 import os
-sys.path.append(os.getcwd())
 
-from bball_app.core.mongo import Mongo
+script_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.dirname(script_dir)
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+
+from bball.mongo import Mongo
 
 def main():
     mongo = Mongo()

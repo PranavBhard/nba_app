@@ -53,4 +53,4 @@ source ./setup.sh
 export PYTHONPATH=/Users/pranav/Documents/basketball
 
 # Run the sync pipeline
-python -m bball_app.core.pipeline.sync_pipeline "$LEAGUE" "$@"
+python -m bball.pipeline.sync_pipeline "$LEAGUE" "$@"

@@ -15,30 +15,30 @@ import logging
 from datetime import date, datetime, timedelta
 from typing import Dict, List, Optional
 
-# Add parent directory to path for imports
+# Add project root to path for imports
 script_dir = os.path.dirname(os.path.abspath(__file__))
-parent_dir = os.path.dirname(os.path.dirname(script_dir))
-if parent_dir not in sys.path:
-    sys.path.insert(0, parent_dir)
+project_root = os.path.dirname(script_dir)
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
 
 from flask import Flask, render_template, request, jsonify, redirect, url_for, send_file, g
 # fetch_dates, parse_date_range moved to core/pipeline/sync_pipeline
-from bball_app.core.data.espn_client import ESPNClient
-from bball_app.config import config
-from bball_app.core.mongo import Mongo
-from bball_app.core.models import NBAModel
-from bball_app.core.models import PointsRegressionTrainer
-from bball_app.core.services.matchup_chat import Controller as MatchupChatController
-from bball_app.core.services.matchup_chat.schemas import ControllerOptions
+from bball.data.espn_client import ESPNClient
+from bball.config import config
+from bball.mongo import Mongo
+from bball.models import NBAModel
+from bball.models import PointsRegressionTrainer
+from bball.services.matchup_chat import Controller as MatchupChatController
+from bball.services.matchup_chat.schemas import ControllerOptions
 
 # Import unified core infrastructure
-from bball_app.core.services.config_manager import ModelConfigManager
-from bball_app.core.models.artifact_loader import ArtifactLoader
-from bball_app.core.services.business_logic import ModelBusinessLogic
-from bball_app.core.services.artifacts import ArtifactManager
-from bball_app.core.stats.per_calculator import PERCalculator
+from bball.services.config_manager import ModelConfigManager
+from bball.models.artifact_loader import ArtifactLoader
+from bball.services.business_logic import ModelBusinessLogic
+from bball.services.artifacts import ArtifactManager
+from bball.stats.per_calculator import PERCalculator
 
-from bball_app.core.training import (
+from bball.training import (
     evaluate_model_combo,
     evaluate_model_combo_with_calibration,
     create_model_with_c,
@@ -51,7 +51,7 @@ from bball_app.core.training import (
     MODEL_CACHE_FILE,
     MODEL_CACHE_FILE_NO_PER
 )
-from bball_app.core.features.sets import get_features_by_sets, get_all_features
+from bball.features.sets import get_features_by_sets, get_all_features
 
 # Backward compatibility functions for default features
 def get_default_classifier_features():
@@ -61,7 +61,7 @@ def get_default_classifier_features():
 def get_default_points_features():
     """Get default points features (empty list - points model uses its own features)."""
     return []
-from bball_app.core.utils import get_season_from_date as get_season_from_date_core
+from bball.utils import get_season_from_date as get_season_from_date_core
 import pandas as pd
 import numpy as np
 from sklearn.preprocessing import StandardScaler
@@ -100,7 +100,7 @@ db = mongo.db
 config_manager = ModelConfigManager(db)
 
 # Context processor to provide league config to all templates
-from bball_app.core.league_config import load_league_config, get_available_leagues
+from bball.league_config import load_league_config, get_available_leagues
 
 @app.context_processor
 def inject_league_context():
@@ -172,7 +172,7 @@ def get_master_training_path() -> str:
     if league:
         return league.master_training_csv
     # Fallback to NBA config if no league context
-    from bball_app.core.league_config import load_league_config
+    from bball.league_config import load_league_config
     return load_league_config('nba').master_training_csv
 
 
@@ -237,7 +237,7 @@ def create_ensemble_model(ensemble_config: dict, league=None):
         NBAModel instance with ensemble loaded, or None if failed
     """
     try:
-        from bball_app.core.training.stacking_trainer import StackingTrainer
+        from bball.training.stacking_trainer import StackingTrainer
         import uuid
 
         # Get ensemble configuration
@@ -396,7 +396,7 @@ def get_points_model_trainer(preloaded_selected_config: dict = None, points_conf
         PointsRegressionTrainer instance with loaded model, or None if no config selected
     """
     try:
-        from bball_app.core.models import PointsRegressionTrainer
+        from bball.models import PointsRegressionTrainer
         global _points_trainer, _points_trainer_model_path
 
         # Determine collection name
@@ -608,8 +608,8 @@ def _get_venv_python_executable() -> str:
     This matters because the web app is sometimes launched with a system/Homebrew Python,
     but background jobs (feature regen / add-columns) rely on deps installed in the repo venv.
     """
-    # web/app.py lives at: nba_app/web/app.py
-    # venv lives at:        nba_app/venv/bin/python
+    # web/app.py lives at: basketball/web/app.py
+    # venv lives at:        basketball/venv/bin/python
     venv_python = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'venv', 'bin', 'python'))
     return venv_python if os.path.exists(venv_python) else sys.executable
 
@@ -624,7 +624,7 @@ def _spawn_master_training_job(cmd: list, job_id: str, job_type: str, league=Non
     import subprocess
     from datetime import datetime
 
-    logs_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', 'job_logs'))
+    logs_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'job_logs'))
     os.makedirs(logs_dir, exist_ok=True)
     log_path = os.path.join(logs_dir, f"{job_type}_{job_id}.log")
 
@@ -1584,7 +1584,7 @@ def index(league_id=None):
                 # Gametime - parse from event.date (UTC format like "2026-02-01T19:00Z")
                 if event_gametime:
                     try:
-                        from bball_app.core.utils.date_utils import parse_gametime
+                        from bball.utils.date_utils import parse_gametime
                         parsed_gametime = parse_gametime(event_gametime)
                         if parsed_gametime:
                             update_doc['$set']['gametime'] = parsed_gametime
@@ -2531,7 +2531,7 @@ def get_player_game_status(game_id: str) -> Dict:
 @app.route('/api/move-player', methods=['POST'])
 def move_player(league_id=None):
     """Move a player from one team to another. Thin wrapper around core game_service."""
-    from bball_app.core.services.game_service import move_player_to_team
+    from bball.services.game_service import move_player_to_team
 
     data = request.json
     player_id = data.get('player_id')
@@ -2590,7 +2590,7 @@ def api_teams_list(league_id=None):
 @app.route('/api/player-search', methods=['GET'])
 def player_search(league_id=None):
     """Search for players by name. Thin wrapper around core game_service."""
-    from bball_app.core.services.game_service import search_players_for_roster
+    from bball.services.game_service import search_players_for_roster
 
     q = request.args.get('q', '').strip()
     season = request.args.get('season', '')
@@ -2606,7 +2606,7 @@ def player_search(league_id=None):
 @app.route('/api/add-player-to-roster', methods=['POST'])
 def add_player_to_roster(league_id=None):
     """Add a player to a team's roster. Thin wrapper around core game_service."""
-    from bball_app.core.services.game_service import add_player_to_team_roster
+    from bball.services.game_service import add_player_to_team_roster
 
     data = request.json
     player_id = data.get('player_id')
@@ -2630,7 +2630,7 @@ def add_player_to_roster(league_id=None):
 @app.route('/api/drop-player-from-roster', methods=['POST'])
 def drop_player_from_roster_endpoint(league_id=None):
     """Drop a player from a team's roster entirely."""
-    from bball_app.core.services.lineup_service import drop_player_from_roster
+    from bball.services.lineup_service import drop_player_from_roster
 
     data = request.json
     player_id = data.get('player_id')
@@ -2653,7 +2653,7 @@ def drop_player_from_roster_endpoint(league_id=None):
 @app.route('/api/auto-set-lineups', methods=['POST'])
 def auto_set_lineups_endpoint(league_id=None):
     """Auto-set lineups for all teams playing on a date based on previous game."""
-    from bball_app.core.services.lineup_service import auto_set_lineups
+    from bball.services.lineup_service import auto_set_lineups
 
     data = request.json or {}
     game_date = data.get('game_date') or datetime.now().strftime('%Y-%m-%d')
@@ -2909,7 +2909,7 @@ def update_player(league_id=None):
 @app.route('/<league_id>/api/game-detail/<game_id>', methods=['GET'])
 def api_game_detail(game_id, league_id=None):
     """Get game detail data for modal display. Thin wrapper around core game_service."""
-    from bball_app.core.services.game_service import get_game_detail
+    from bball.services.game_service import get_game_detail
 
     date_param = request.args.get('date')
     game_date = None
@@ -2932,7 +2932,7 @@ def api_game_detail(game_id, league_id=None):
 @app.route('/api/player-detail', methods=['GET'])
 def api_player_detail(league_id=None):
     """Get player detail stats for the player detail panel."""
-    from bball_app.core.services.game_service import get_player_detail
+    from bball.services.game_service import get_player_detail
 
     player_id = request.args.get('player_id')
     team = request.args.get('team')
@@ -2964,7 +2964,7 @@ def api_player_detail(league_id=None):
 @app.route('/api/player-per', methods=['GET'])
 def api_player_per(league_id=None):
     """Get player PER (separate endpoint due to calculation time)."""
-    from bball_app.core.services.game_service import get_player_per
+    from bball.services.game_service import get_player_per
 
     player_id = request.args.get('player_id')
     team = request.args.get('team')
@@ -2996,7 +2996,7 @@ def api_player_per(league_id=None):
 @app.route('/api/players-per-batch', methods=['POST'])
 def api_players_per_batch(league_id=None):
     """Get PER for multiple players at once (more efficient than individual calls)."""
-    from bball_app.core.services.game_service import get_players_per_batch
+    from bball.services.game_service import get_players_per_batch
 
     data = request.json
     if not data:
@@ -3041,7 +3041,7 @@ def api_player_news(league_id=None):
     Returns extracted text from the player's Rotowire page.
     """
     import json
-    from bball_app.core.services.webpage_parser import WebpageParser
+    from bball.services.webpage_parser import WebpageParser
 
     player_id = request.args.get('player_id')
     if not player_id:
@@ -3072,10 +3072,10 @@ def api_player_news(league_id=None):
         }), 404
 
     # Load the player slugs mapping file
-    # Path is relative to nba_app/ directory (where leagues/ folder lives)
+    # Path is relative to project root (where leagues/ folder lives)
     import os
-    nba_app_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    slugs_path = os.path.join(nba_app_dir, player_slugs_file)
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    slugs_path = os.path.join(project_root, player_slugs_file)
 
     if not os.path.exists(slugs_path):
         return jsonify({
@@ -3153,7 +3153,7 @@ def predict(league_id=None):
     Thin wrapper around core PredictionService.
     Rosters are the single source of truth for player lists.
     """
-    from bball_app.core.services.prediction import PredictionService
+    from bball.services.prediction import PredictionService
 
     data = request.json
     if not data:
@@ -3630,13 +3630,13 @@ def download_config_training(league_id=None):
         # If the stored path doesn't exist (old location), try to map to new ../model_outputs
         if not os.path.exists(training_csv):
             try:
-                outputs_root = os.path.join(os.path.dirname(parent_dir), 'model_outputs')
+                outputs_root = os.path.join(project_root, 'model_outputs')
             except Exception:
                 outputs_root = 'model_outputs'
             # Candidate 1: same basename in consolidated outputs dir
             candidate1 = os.path.join(outputs_root, os.path.basename(training_csv))
-            # Candidate 2: replace old nba_app/model_output segment with new consolidated
-            old_seg = os.path.join(parent_dir, 'model_output')
+            # Candidate 2: replace old model_output segment with consolidated model_outputs
+            old_seg = os.path.join(project_root, 'model_output')
             new_seg = outputs_root
             candidate2 = training_csv.replace(old_seg, new_seg) if old_seg in training_csv else None
             new_path = None
@@ -3671,8 +3671,8 @@ def pull_game_data(league_id=None):
     Thin wrapper around core sync_pipeline - spins off background job
     and returns job_id for frontend polling.
     """
-    from bball_app.core.services.jobs import create_job, update_job_progress, complete_job, fail_job
-    from bball_app.core.league_config import load_league_config
+    from bball.services.jobs import create_job, update_job_progress, complete_job, fail_job
+    from bball.league_config import load_league_config
 
     data = request.json
     date_str = data.get('date')
@@ -3700,14 +3700,14 @@ def pull_game_data(league_id=None):
 
     def run_sync_background(job_id: str, date_str: str, league_id: str):
         """Background worker for data sync."""
-        from bball_app.core.pipeline.sync_pipeline import run_sync_pipeline
+        from bball.pipeline.sync_pipeline import run_sync_pipeline
 
         logger.info(f"[SYNC BG] Starting background sync for job {job_id}, date={date_str}, league={league_id}")
 
         try:
             # Load league config fresh (not from Flask context)
             league_config = load_league_config(league_id)
-            from bball_app.core.mongo import Mongo
+            from bball.mongo import Mongo
             bg_db = Mongo().db
 
             game_date = datetime.strptime(date_str, '%Y-%m-%d').date()
@@ -3790,9 +3790,9 @@ def predict_all(league_id=None):
     Thin wrapper around core PredictionService - spins off background job
     and returns job_id for frontend polling.
     """
-    from bball_app.core.services.jobs import create_job, update_job_progress, complete_job, fail_job
-    from bball_app.core.services.prediction import PredictionService
-    from bball_app.core.league_config import load_league_config
+    from bball.services.jobs import create_job, update_job_progress, complete_job, fail_job
+    from bball.services.prediction import PredictionService
+    from bball.league_config import load_league_config
 
     data = request.json
     date_str = data.get('date')
@@ -3827,7 +3827,7 @@ def predict_all(league_id=None):
         try:
             # Load league config fresh (not from Flask context)
             league_config = load_league_config(league_id)
-            from bball_app.core.mongo import Mongo
+            from bball.mongo import Mongo
             bg_db = Mongo().db
 
             # Use core PredictionService with job_id for progress tracking
@@ -3938,7 +3938,7 @@ def generate_betting_report_endpoint(league_id=None):
         selected_config = db[config_coll].find_one({'selected': True})
         brier_score = selected_config.get('brier_score', 0.25) if selected_config else 0.25
 
-        from bball_app.core.services.betting_report import generate_betting_report
+        from bball.services.betting_report import generate_betting_report
         recommendations = generate_betting_report(db, date_str, bankroll, brier_score, g.league, edge_threshold, force_include_game_ids)
 
         return jsonify({
@@ -3964,7 +3964,7 @@ def model_config(league_id=None):
     # If CSV loading failed, fallback to feature_sets.py (for backward compatibility)
     if not feature_sets_dict:
         print("Warning: Failed to load features from CSV, falling back to feature_sets.py")
-        from bball_app.core.features.sets import FEATURE_SETS, FEATURE_SET_DESCRIPTIONS
+        from bball.features.sets import FEATURE_SETS, FEATURE_SET_DESCRIPTIONS
         feature_sets_dict = FEATURE_SETS
         feature_set_descriptions = FEATURE_SET_DESCRIPTIONS
 
@@ -4007,7 +4007,7 @@ def model_config_points(league_id=None):
     # If CSV loading failed, fallback to hardcoded feature sets (for backward compatibility)
     if not feature_sets_dict:
         print("Warning: Failed to load features from CSV for points config, falling back to hardcoded sets")
-        from bball_app.core.features.sets import FEATURE_SETS, FEATURE_SET_DESCRIPTIONS
+        from bball.features.sets import FEATURE_SETS, FEATURE_SET_DESCRIPTIONS
         feature_sets_dict = dict(FEATURE_SETS)
         feature_set_descriptions = FEATURE_SET_DESCRIPTIONS
 
@@ -4047,7 +4047,7 @@ def ensemble_config(league_id=None):
     feature_sets_dict, feature_set_descriptions = load_features_from_master_csv()
 
     if not feature_sets_dict:
-        from bball_app.core.features.sets import FEATURE_SETS, FEATURE_SET_DESCRIPTIONS
+        from bball.features.sets import FEATURE_SETS, FEATURE_SET_DESCRIPTIONS
         feature_sets_dict = dict(FEATURE_SETS)
         feature_set_descriptions = FEATURE_SET_DESCRIPTIONS
 
@@ -4462,7 +4462,7 @@ def get_model_config(config_id, league_id=None):
 def update_model_config(config_id, league_id=None):
     """Update a model configuration."""
     try:
-        from bball_app.core.services.config_manager import ModelConfigManager
+        from bball.services.config_manager import ModelConfigManager
 
         classifier_config_collection = g.league.collections.get('model_config_classifier', 'nba_model_config')
         data = request.json
@@ -4619,7 +4619,7 @@ def delete_model_config(config_id, league_id=None):
 def get_ensembles(league_id=None):
     """Get all ensemble configurations."""
     try:
-        from bball_app.core.services.training_service import TrainingService
+        from bball.services.training_service import TrainingService
         service = TrainingService(league=g.league, db=db)
         ensembles = service.list_ensembles()
         return jsonify({'success': True, 'ensembles': ensembles})
@@ -4836,7 +4836,7 @@ def retrain_ensemble_meta(ensemble_id, league_id=None):
 @app.route('/api/ensembles/<ensemble_id>/retrain-base/<base_model_id>', methods=['POST'])
 def retrain_ensemble_base(ensemble_id, base_model_id, league_id=None):
     """Retrain a base model within an ensemble, then retrain the ensemble meta-model."""
-    from bball_app.core.services.jobs import create_job, update_job_progress, complete_job, fail_job
+    from bball.services.jobs import create_job, update_job_progress, complete_job, fail_job
 
     try:
         from bson import ObjectId
@@ -4875,12 +4875,12 @@ def retrain_ensemble_base(ensemble_id, base_model_id, league_id=None):
 
 def _run_retrain_base_job(job_id, ensemble_id, base_model_id, league_id):
     """Background job: retrain a base model then retrain the ensemble meta-model."""
-    from bball_app.core.league_config import load_league_config
-    from bball_app.core.services.config_manager import ModelConfigManager
-    from bball_app.core.services.training_service import TrainingService
-    from bball_app.core.training.experiment_runner import ExperimentRunner
-    from bball_app.core.mongo import Mongo
-    from bball_app.core.services.jobs import update_job_progress, complete_job, fail_job
+    from bball.league_config import load_league_config
+    from bball.services.config_manager import ModelConfigManager
+    from bball.services.training_service import TrainingService
+    from bball.training.experiment_runner import ExperimentRunner
+    from bball.mongo import Mongo
+    from bball.services.jobs import update_job_progress, complete_job, fail_job
     import traceback as tb
     import uuid
 
@@ -4992,7 +4992,7 @@ def _run_retrain_base_job(job_id, ensemble_id, base_model_id, league_id):
 @app.route('/api/ensembles/<ensemble_id>/update-calibration', methods=['POST'])
 def update_ensemble_calibration(ensemble_id, league_id=None):
     """Recalibrate an ensemble: retrain all base models with new time settings, then create a new ensemble."""
-    from bball_app.core.services.jobs import create_job, update_job_progress, complete_job, fail_job
+    from bball.services.jobs import create_job, update_job_progress, complete_job, fail_job
 
     data = request.json
     if not data:
@@ -5018,9 +5018,9 @@ def update_ensemble_calibration(ensemble_id, league_id=None):
     )
 
     def run_recalibrate_background(job_id, ensemble_id, begin_year, calibration_years, evaluation_year, calibration_method, exclude_seasons, min_games_played, league_id):
-        from bball_app.core.league_config import load_league_config
-        from bball_app.core.services.training_service import TrainingService
-        from bball_app.core.mongo import Mongo
+        from bball.league_config import load_league_config
+        from bball.services.training_service import TrainingService
+        from bball.mongo import Mongo
         import traceback as tb
 
         try:
@@ -5287,11 +5287,11 @@ def download_model_config_training_csv(config_id, league_id=None):
         # Fallback: if path doesn't exist, try consolidated outputs remap
         if not os.path.exists(csv_path):
             try:
-                outputs_root = os.path.join(os.path.dirname(parent_dir), 'model_outputs')
+                outputs_root = os.path.join(project_root, 'model_outputs')
             except Exception:
                 outputs_root = 'model_outputs'
             candidate1 = os.path.join(outputs_root, os.path.basename(csv_path))
-            old_seg = os.path.join(parent_dir, 'model_output')
+            old_seg = os.path.join(project_root, 'model_output')
             new_seg = outputs_root
             candidate2 = csv_path.replace(old_seg, new_seg) if old_seg in csv_path else None
             new_path = None
@@ -5311,7 +5311,7 @@ def download_model_config_training_csv(config_id, league_id=None):
         return jsonify({'success': False, 'error': str(e), 'traceback': traceback.format_exc()}), 500
 
 # Job helper functions — delegate to core/services/jobs.py (league-aware)
-from bball_app.core.services.jobs import create_job, update_job_progress, complete_job, fail_job
+from bball.services.jobs import create_job, update_job_progress, complete_job, fail_job
 
 
 @app.route('/<league_id>/api/jobs/<job_id>', methods=['GET'])
@@ -5413,7 +5413,7 @@ def resolve_feature_dependencies(league_id=None):
         all_features = [c for c in df.columns if c not in metadata_cols]
         
         # Find matching features by substring
-        from bball_app.core.features.sets import find_features_by_substrings
+        from bball.features.sets import find_features_by_substrings
 
         if not feature_substrings or len(feature_substrings) == 0:
             # Empty filter = regenerate all features
@@ -5429,7 +5429,7 @@ def resolve_feature_dependencies(league_id=None):
                 }), 404
         
         # Resolve dependencies
-        from bball_app.core.features.dependencies import resolve_dependencies, categorize_features
+        from bball.features.dependencies import resolve_dependencies, categorize_features
         
         all_to_regenerate, dependency_map = resolve_dependencies(
             requested_features,
@@ -5491,7 +5491,7 @@ def regenerate_master_features(league_id=None):
         all_csv_features = [c for c in df.columns if c not in metadata_cols]
         
         # Find matching features
-        from bball_app.core.features.sets import find_features_by_substrings
+        from bball.features.sets import find_features_by_substrings
 
         if not feature_substrings or len(feature_substrings) == 0:
             # Empty filter = regenerate all features
@@ -5507,7 +5507,7 @@ def regenerate_master_features(league_id=None):
                 }), 404
         
         # Resolve dependencies for metadata
-        from bball_app.core.features.dependencies import resolve_dependencies, categorize_features
+        from bball.features.dependencies import resolve_dependencies, categorize_features
         all_to_regenerate, dependency_map = resolve_dependencies(
             requested_features,
             include_transitive=True
@@ -5566,7 +5566,7 @@ def regenerate_master_features(league_id=None):
 def get_possible_features(league_id=None):
     """Get list of all possible features that can be generated."""
     try:
-        from bball_app.core.services.training_data import get_all_possible_features
+        from bball.services.training_data import get_all_possible_features
         features = get_all_possible_features(no_player=False)
         return jsonify({
             'success': True,
@@ -5663,7 +5663,7 @@ def add_master_columns(league_id=None):
             return jsonify({'success': False, 'error': 'Master training CSV not found'}), 404
         
         # Validate feature names format
-        from bball_app.core.features.parser import validate_feature_name
+        from bball.features.parser import validate_feature_name
         invalid_features = [f for f in feature_names if not validate_feature_name(f)]
         if invalid_features:
             return jsonify({
@@ -5672,7 +5672,7 @@ def add_master_columns(league_id=None):
             }), 400
         
         # Get all possible features to validate
-        from bball_app.core.services.training_data import get_all_possible_features
+        from bball.services.training_data import get_all_possible_features
         all_possible = set(get_all_possible_features(no_player=False))
         unknown_features = [f for f in feature_names if f not in all_possible]
         if unknown_features:
@@ -5728,7 +5728,7 @@ def add_master_columns(league_id=None):
 def master_training_available_seasons(league_id=None):
     """Get available seasons from MongoDB with game counts and master training status."""
     try:
-        from bball_app.core.services.training_data import TrainingDataService
+        from bball.services.training_data import TrainingDataService
 
         service = TrainingDataService(league=g.league)
         seasons = service.get_available_seasons()
@@ -5773,7 +5773,7 @@ def master_training_regenerate_seasons(league_id=None):
         # Spawn background thread for regeneration
         def run_regeneration():
             try:
-                from bball_app.core.services.training_data import TrainingDataService
+                from bball.services.training_data import TrainingDataService
 
                 def progress_callback(current, total, pct, message):
                     update_job_progress(job_id, pct, message, league=league)
@@ -5829,7 +5829,7 @@ def master_training_regenerate_full(league_id=None):
         # Spawn background thread for regeneration
         def run_regeneration():
             try:
-                from bball_app.core.services.training_data import TrainingDataService
+                from bball.services.training_data import TrainingDataService
 
                 def progress_callback(current, total, pct, message):
                     update_job_progress(job_id, pct, message, league=league)
@@ -5867,12 +5867,12 @@ def master_training_regenerate_full(league_id=None):
 
 def run_training_job(job_id, parsed_config, league):
     """Thin wrapper: delegates training to core TrainingService."""
-    from bball_app.core.services.jobs import update_job_progress, complete_job, fail_job
+    from bball.services.jobs import update_job_progress, complete_job, fail_job
 
     try:
         update_job_progress(job_id, 1, 'Initializing training...', league=league)
 
-        from bball_app.core.services.training_service import TrainingService
+        from bball.services.training_service import TrainingService
 
         service = TrainingService(league=league)
 
@@ -5901,7 +5901,7 @@ def run_training_job(job_id, parsed_config, league):
     except Exception as e:
         import traceback
         traceback.print_exc()
-        from bball_app.core.services.jobs import fail_job
+        from bball.services.jobs import fail_job
         fail_job(job_id, str(e), f'Training failed: {str(e)}', league=league)
 
 
@@ -6156,7 +6156,7 @@ def run_ensemble_training_job(
         update_job_progress(job_id, 1, 'Initializing ensemble training...', league=league)
 
         # Import required modules
-        from bball_app.core.training.stacking_trainer import StackingTrainer
+        from bball.training.stacking_trainer import StackingTrainer
         import uuid
 
         update_job_progress(job_id, 5, 'Loading base models...', league=league)
@@ -6279,8 +6279,8 @@ def run_ensemble_training_job(
 def train_points_model(league_id=None):
     """Train a points regression model."""
     try:
-        from bball_app.core.models import PointsRegressionTrainer
-        from bball_app.core.features.sets import get_features_by_sets
+        from bball.models import PointsRegressionTrainer
+        from bball.features.sets import get_features_by_sets
         points_config_collection = g.league.collections.get('model_config_points', 'model_config_points_nba')
         
         config = request.json
@@ -6409,7 +6409,7 @@ def train_points_model(league_id=None):
             features = all_features
         
         # Use master training data if available (same master CSV as classifiers)
-        from bball_app.core.services.training_data import (
+        from bball.services.training_data import (
             extract_features_from_master_for_points,
             check_master_needs_regeneration,
             get_master_training_metadata,
@@ -6694,7 +6694,7 @@ def train_points_model(league_id=None):
 def predict_points(league_id=None):
     """Predict points for a game using the trained points regression model."""
     try:
-        from bball_app.core.models import PointsRegressionTrainer
+        from bball.models import PointsRegressionTrainer
         import glob
         
         data = request.json
@@ -7453,7 +7453,7 @@ def get_market_prices(league_id=None):
     Uses unauthenticated Kalshi public API to fetch live market prices.
     Thin wrapper around core/market/kalshi.get_game_market_data().
     """
-    from bball_app.core.market.kalshi import get_game_market_data
+    from bball.market.kalshi import get_game_market_data
 
     date_str = request.args.get('date')
     if not date_str:
@@ -7524,7 +7524,7 @@ def get_market_dashboard(league_id=None):
     """
     import os
     from datetime import timedelta
-    from bball_app.core.market.connector import MarketConnector
+    from bball.market.connector import MarketConnector
 
     # Check for API credentials
     api_key = os.environ.get('KALSHI_API_KEY')
@@ -7719,7 +7719,7 @@ def get_market_dashboard(league_id=None):
 def get_market_fills(league_id=None):
     """Get paginated fills from Kalshi API."""
     import os
-    from bball_app.core.market.connector import MarketConnector
+    from bball.market.connector import MarketConnector
 
     cursor = request.args.get('cursor')
 
@@ -7777,7 +7777,7 @@ def get_market_fills(league_id=None):
 def get_market_settlements(league_id=None):
     """Get paginated settlements from Kalshi API."""
     import os
-    from bball_app.core.market.connector import MarketConnector
+    from bball.market.connector import MarketConnector
 
     cursor = request.args.get('cursor')
 
@@ -7952,9 +7952,9 @@ def get_portfolio_game_positions(league_id=None):
     Thin wrapper around core/market/kalshi.match_portfolio_to_games().
     """
     import os
-    from bball_app.core.market.connector import MarketConnector
-    from bball_app.core.market.kalshi import match_portfolio_to_games
-    from bball_app.core.league_config import load_league_config
+    from bball.market.connector import MarketConnector
+    from bball.market.kalshi import match_portfolio_to_games
+    from bball.league_config import load_league_config
 
     date_str = request.args.get('date')
     if not date_str:

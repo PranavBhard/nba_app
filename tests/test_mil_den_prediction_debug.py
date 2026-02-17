@@ -8,16 +8,14 @@ import sys
 import os
 from datetime import datetime
 
-# Add parent directory to path (the directory containing nba_app folder)
 script_dir = os.path.dirname(os.path.abspath(__file__))
-nba_app_dir = os.path.dirname(script_dir)  # This is the nba_app folder
-parent_of_nba_app = os.path.dirname(nba_app_dir)  # Directory containing nba_app
-if parent_of_nba_app not in sys.path:
-    sys.path.insert(0, parent_of_nba_app)
+project_root = os.path.dirname(script_dir)
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
 
-from bball_app.core.mongo import Mongo
-from bball_app.core.stats.per_calculator import PERCalculator
-from bball_app.core.models.bball_model import BballModel
+from bball.mongo import Mongo
+from bball.stats.per_calculator import PERCalculator
+from bball.models.bball_model import BballModel
 
 def debug_mil_den_prediction():
     """Debug the exact prediction flow for MIL@DEN 2026-01-11."""

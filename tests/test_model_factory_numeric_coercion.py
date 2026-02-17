@@ -16,16 +16,15 @@ import os
 import tempfile
 
 
-# Add parent of nba_app to path for imports
-script_dir = os.path.dirname(os.path.abspath(__file__))  # nba_app/tests/
-nba_app_dir = os.path.dirname(script_dir)  # nba_app/
-project_root = os.path.dirname(nba_app_dir)  # parent of nba_app/
+# Add project root to path
+script_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.dirname(script_dir)
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 
 def test_model_factory_train_from_data_coerces_to_numeric() -> bool:
-    from bball_app.core.models.artifact_loader import ArtifactLoader
+    from bball.models.artifact_loader import ArtifactLoader
 
     # Create a CSV with one non-numeric feature column that previously caused
     # np.isnan to crash due to object dtype.

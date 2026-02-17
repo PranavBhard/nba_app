@@ -13,7 +13,7 @@ prints a diagnostic hint to increase sample size.
 
 Usage:
   source venv/bin/activate
-  PYTHONPATH=/Users/pranav/Documents/NBA \
+  PYTHONPATH=/Users/pranav/Documents/basketball \
     python tests/test_injury_features_add_columns_flow.py
 
 Optional environment variables:
@@ -32,8 +32,7 @@ import pandas as pd
 
 # Add project root to path
 script_dir = os.path.dirname(os.path.abspath(__file__))
-nba_app_dir = os.path.dirname(script_dir)
-project_root = os.path.dirname(nba_app_dir)
+project_root = os.path.dirname(script_dir)
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
@@ -93,9 +92,9 @@ def _scan_nonzero(df: pd.DataFrame, targets: List[str]) -> Dict[str, int]:
 
 
 def main() -> int:
-    from bball_app.core.mongo import Mongo
-    from bball_app.core.services.training_data import MASTER_TRAINING_PATH
-    from bball_app.cli.populate_master_training_cols import populate_columns
+    from bball.mongo import Mongo
+    from bball.services.training_data import MASTER_TRAINING_PATH
+    from bball.cli.populate_master_training_cols import populate_columns
 
     sample_size = int(os.environ.get("INJ_SAMPLE_SIZE", "2000"))
     game_limit = int(os.environ.get("INJ_GAME_LIMIT", "10000"))

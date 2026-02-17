@@ -55,4 +55,4 @@ source ./setup.sh
 export PYTHONPATH=/Users/pranav/Documents/basketball
 
 # Run the model results script
-python -m bball_app.cli.scripts.model_results "$LEAGUE" "$@"
+python cli/scripts/model_results.py "$LEAGUE" "$@"

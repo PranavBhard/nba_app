@@ -10,7 +10,7 @@ Tests that the prediction pipeline works correctly:
 
 Usage:
     source venv/bin/activate
-    PYTHONPATH=/Users/pranav/Documents/NBA python tests/test_prediction_workflow.py
+    PYTHONPATH=/Users/pranav/Documents/basketball python tests/test_prediction_workflow.py
 """
 
 import sys
@@ -18,8 +18,7 @@ import os
 
 # Add project root to path
 script_dir = os.path.dirname(os.path.abspath(__file__))
-nba_app_dir = os.path.dirname(script_dir)
-project_root = os.path.dirname(nba_app_dir)
+project_root = os.path.dirname(script_dir)
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
@@ -30,7 +29,7 @@ def test_prediction_service_initialization():
     print("TEST: PredictionService Initialization")
     print("=" * 60)
 
-    from bball_app.core.services.prediction import PredictionService
+    from bball.services.prediction import PredictionService
 
     results = []
 
@@ -84,7 +83,7 @@ def test_get_selected_configs():
     print("TEST: Get Selected Configs")
     print("=" * 60)
 
-    from bball_app.core.services.prediction import PredictionService
+    from bball.services.prediction import PredictionService
 
     results = []
     service = PredictionService()
@@ -129,7 +128,7 @@ def test_load_model_from_config():
     print("TEST: Load Model From Config")
     print("=" * 60)
 
-    from bball_app.core.services.prediction import PredictionService
+    from bball.services.prediction import PredictionService
 
     results = []
     service = PredictionService()
@@ -165,7 +164,7 @@ def test_predict_game():
     print("TEST: Predict Single Game")
     print("=" * 60)
 
-    from bball_app.core.services.prediction import PredictionService
+    from bball.services.prediction import PredictionService
 
     results = []
     service = PredictionService()
@@ -214,7 +213,7 @@ def test_matchup_predict_tool():
     print("TEST: Matchup Predict Tool")
     print("=" * 60)
 
-    from bball_app.core.services.matchup_predict import predict
+    from bball.services.matchup_predict import predict
 
     results = []
 
@@ -252,7 +251,7 @@ def test_games_for_date():
     print("TEST: Get Games For Date")
     print("=" * 60)
 
-    from bball_app.core.services.prediction import PredictionService
+    from bball.services.prediction import PredictionService
 
     results = []
     service = PredictionService()
@@ -278,7 +277,7 @@ def test_feature_extraction_for_prediction():
     print("TEST: Feature Extraction For Prediction")
     print("=" * 60)
 
-    from bball_app.core.models.bball_model import BballModel
+    from bball.models.bball_model import BballModel
 
     results = []
 
@@ -340,8 +339,8 @@ def test_elo_cache_integration():
     print("TEST: Elo Cache Integration")
     print("=" * 60)
 
-    from bball_app.core.mongo import Mongo
-    from bball_app.core.stats.elo_cache import EloCache
+    from bball.mongo import Mongo
+    from bball.stats.elo_cache import EloCache
 
     results = []
     db = Mongo().db

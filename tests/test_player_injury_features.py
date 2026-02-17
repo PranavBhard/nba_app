@@ -12,7 +12,7 @@ features were calculating to 0 because the feature registry was generating
 theoretical feature names that didn't match what calculators actually return.
 
 Run with:
-    PYTHONPATH=/Users/pranav/Documents/NBA pytest tests/test_player_injury_features.py -v
+    PYTHONPATH=/Users/pranav/Documents/basketball pytest tests/test_player_injury_features.py -v
 """
 
 import pytest
@@ -25,8 +25,8 @@ class TestPlayerInjuryFeatures:
     @pytest.fixture(autouse=True)
     def setup(self):
         """Setup test fixtures."""
-        from bball_app.core.mongo import Mongo
-        from bball_app.core.league_config import load_league_config
+        from bball.mongo import Mongo
+        from bball.league_config import load_league_config
 
         self.mongo = Mongo()
         self.db = self.mongo.db
@@ -34,8 +34,8 @@ class TestPlayerInjuryFeatures:
 
     def test_registry_player_features_match_calculator(self):
         """Verify registry player features match what PERCalculator returns."""
-        from bball_app.core.features.registry import FeatureGroups
-        from bball_app.core.stats.per_calculator import PERCalculator
+        from bball.features.registry import FeatureGroups
+        from bball.stats.per_calculator import PERCalculator
 
         # Get features from registry
         registry_features = set(FeatureGroups.get_features_for_group('player_talent'))
@@ -60,9 +60,9 @@ class TestPlayerInjuryFeatures:
 
     def test_registry_injury_features_match_calculator(self):
         """Verify registry injury features match what StatHandlerV2 returns."""
-        from bball_app.core.features.registry import FeatureGroups
-        from bball_app.core.stats.handler import StatHandlerV2
-        from bball_app.core.stats.per_calculator import PERCalculator
+        from bball.features.registry import FeatureGroups
+        from bball.stats.handler import StatHandlerV2
+        from bball.stats.per_calculator import PERCalculator
 
         # Get features from registry
         registry_features = set(FeatureGroups.get_features_for_group('injuries'))
@@ -105,7 +105,7 @@ class TestPlayerInjuryFeatures:
 
     def test_player_features_have_nonzero_values(self):
         """Verify player features calculate to non-zero values."""
-        from bball_app.core.stats.per_calculator import PERCalculator
+        from bball.stats.per_calculator import PERCalculator
 
         per_calc = PERCalculator(self.db, preload=False, league=self.league)
         result = per_calc.get_game_per_features(
@@ -127,8 +127,8 @@ class TestPlayerInjuryFeatures:
 
     def test_injury_features_have_nonzero_values(self):
         """Verify injury features calculate to non-zero values for games with injuries."""
-        from bball_app.core.stats.handler import StatHandlerV2
-        from bball_app.core.stats.per_calculator import PERCalculator
+        from bball.stats.handler import StatHandlerV2
+        from bball.stats.per_calculator import PERCalculator
 
         # Get a game with injuries
         game = self.db.stats_nba.find_one({
@@ -168,9 +168,9 @@ class TestPlayerInjuryFeatures:
 
     def test_training_data_service_returns_correct_features(self):
         """Verify get_all_possible_features returns features that calculators generate."""
-        from bball_app.core.services.training_data import get_all_possible_features
-        from bball_app.core.stats.per_calculator import PERCalculator
-        from bball_app.core.stats.handler import StatHandlerV2
+        from bball.services.training_data import get_all_possible_features
+        from bball.stats.per_calculator import PERCalculator
+        from bball.stats.handler import StatHandlerV2
 
         all_features = get_all_possible_features(no_player=False)
         requested_player = [f for f in all_features if f.startswith('player_')]

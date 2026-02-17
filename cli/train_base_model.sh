@@ -47,4 +47,4 @@ source ./setup.sh
 export PYTHONPATH=/Users/pranav/Documents/basketball
 
 # Run the training script
-python -m bball_app.cli.scripts.train_base_model "$LEAGUE" "$@"
+python cli/scripts/train_base_model.py "$LEAGUE" "$@"

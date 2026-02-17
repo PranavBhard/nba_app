@@ -7,6 +7,7 @@ __pycache__/
 *.pyo
 *.pyd
 .Python
+*.egg-info/
 
 # IDE
 .claude/
@@ -14,8 +15,6 @@ __pycache__/
 .cursor*
 .vscode/
 .idea/
-
-# Specstory
 .specstory/
 
 # Environment variables
@@ -24,12 +23,25 @@ __pycache__/
 # OS files
 .DS_Store
 
+# Data directories (outside the package, not tracked)
+master_training/
+model_output/
+model_outputs/
+job_logs/
+artifacts/
+
+# Model artifacts
+*.pkl
+.system_message_cache.json
+cli/models/
+
 # Logs
 *.log
 
-# Model artifacts and data
-cli/models/
-models/
+# Reports
 reports/
-*.pkl
-.system_message_cache.json
+
+# Misc data files
+*.numbers
+*.csv
+CBB_player_deep_dive/

@@ -10,7 +10,7 @@ Tests that the training pipeline works correctly:
 
 Usage:
     source venv/bin/activate
-    PYTHONPATH=/Users/pranav/Documents/NBA python tests/test_training_workflow.py
+    PYTHONPATH=/Users/pranav/Documents/basketball python tests/test_training_workflow.py
 """
 
 import sys
@@ -19,8 +19,7 @@ import tempfile
 
 # Add project root to path
 script_dir = os.path.dirname(os.path.abspath(__file__))
-nba_app_dir = os.path.dirname(script_dir)
-project_root = os.path.dirname(nba_app_dir)
+project_root = os.path.dirname(script_dir)
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
@@ -31,7 +30,7 @@ def test_nba_model_initialization():
     print("TEST: BballModel Initialization")
     print("=" * 60)
 
-    from bball_app.core.models.bball_model import BballModel
+    from bball.models.bball_model import BballModel
 
     results = []
 
@@ -96,8 +95,8 @@ def test_feature_calculation():
     print("TEST: Feature Calculation")
     print("=" * 60)
 
-    from bball_app.core.mongo import Mongo
-    from bball_app.core.stats.handler import StatHandlerV2
+    from bball.mongo import Mongo
+    from bball.stats.handler import StatHandlerV2
 
     results = []
     db = Mongo().db
@@ -169,7 +168,7 @@ def test_build_features_dict():
     print("TEST: Build Features Dict")
     print("=" * 60)
 
-    from bball_app.core.models.bball_model import BballModel
+    from bball.models.bball_model import BballModel
 
     results = []
 
@@ -229,7 +228,7 @@ def test_create_training_data():
     print("TEST: Create Training Data")
     print("=" * 60)
 
-    from bball_app.core.models.bball_model import BballModel
+    from bball.models.bball_model import BballModel
     import pandas as pd
 
     results = []
@@ -302,7 +301,7 @@ def test_model_factory():
     print("TEST: ArtifactLoader")
     print("=" * 60)
 
-    from bball_app.core.models.artifact_loader import ArtifactLoader
+    from bball.models.artifact_loader import ArtifactLoader
 
     results = []
 
@@ -339,8 +338,8 @@ def test_config_manager():
     print("TEST: ModelConfigManager")
     print("=" * 60)
 
-    from bball_app.core.mongo import Mongo
-    from bball_app.core.services.config_manager import ModelConfigManager
+    from bball.mongo import Mongo
+    from bball.services.config_manager import ModelConfigManager
 
     results = []
     db = Mongo().db

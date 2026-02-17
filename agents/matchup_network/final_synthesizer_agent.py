@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from typing import Any, Dict, List
 
-from bball_app.agents.matchup_network.base import load_rendered_system_message, simple_chat_completion
+from bball.agents.matchup_network.base import load_rendered_system_message, simple_chat_completion
 
 MAX_SECTION_CHARS = 6000
 MAX_CONVO_ITEMS = 8

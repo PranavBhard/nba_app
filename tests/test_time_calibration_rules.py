@@ -14,10 +14,10 @@ import sys
 import os
 from unittest.mock import Mock, patch, MagicMock
 
-# Add parent directory to path for imports
-current_dir = os.path.dirname(os.path.abspath(__file__))
-parent_dir = os.path.dirname(current_dir)
-sys.path.insert(0, parent_dir)
+script_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.dirname(script_dir)
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
 
 def test_rule_1_time_config_validation():
     """Test Rule 1: Base model time config validation."""

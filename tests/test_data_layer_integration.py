@@ -9,7 +9,7 @@ Tests that all repositories can:
 
 Usage:
     source venv/bin/activate
-    PYTHONPATH=/Users/pranav/Documents/NBA python tests/test_data_layer_integration.py
+    PYTHONPATH=/Users/pranav/Documents/basketball python tests/test_data_layer_integration.py
 """
 
 import sys
@@ -17,8 +17,7 @@ import os
 
 # Add project root to path
 script_dir = os.path.dirname(os.path.abspath(__file__))
-nba_app_dir = os.path.dirname(script_dir)
-project_root = os.path.dirname(nba_app_dir)
+project_root = os.path.dirname(script_dir)
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
@@ -29,7 +28,7 @@ def test_mongo_connection():
     print("TEST: MongoDB Connection")
     print("=" * 60)
 
-    from bball_app.core.mongo import Mongo
+    from bball.mongo import Mongo
 
     try:
         mongo = Mongo()
@@ -59,8 +58,8 @@ def test_games_repository():
     print("TEST: GamesRepository")
     print("=" * 60)
 
-    from bball_app.core.mongo import Mongo
-    from bball_app.core.data import GamesRepository
+    from bball.mongo import Mongo
+    from bball.data import GamesRepository
 
     results = []
     db = Mongo().db
@@ -120,8 +119,8 @@ def test_player_stats_repository():
     print("TEST: PlayerStatsRepository")
     print("=" * 60)
 
-    from bball_app.core.mongo import Mongo
-    from bball_app.core.data import PlayerStatsRepository
+    from bball.mongo import Mongo
+    from bball.data import PlayerStatsRepository
 
     results = []
     db = Mongo().db
@@ -157,8 +156,8 @@ def test_classifier_config_repository():
     print("TEST: ClassifierConfigRepository")
     print("=" * 60)
 
-    from bball_app.core.mongo import Mongo
-    from bball_app.core.data import ClassifierConfigRepository
+    from bball.mongo import Mongo
+    from bball.data import ClassifierConfigRepository
 
     results = []
     db = Mongo().db
@@ -200,8 +199,8 @@ def test_points_config_repository():
     print("TEST: PointsConfigRepository")
     print("=" * 60)
 
-    from bball_app.core.mongo import Mongo
-    from bball_app.core.data import PointsConfigRepository
+    from bball.mongo import Mongo
+    from bball.data import PointsConfigRepository
 
     results = []
     db = Mongo().db
@@ -235,8 +234,8 @@ def test_experiment_runs_repository():
     print("TEST: ExperimentRunsRepository")
     print("=" * 60)
 
-    from bball_app.core.mongo import Mongo
-    from bball_app.core.data import ExperimentRunsRepository
+    from bball.mongo import Mongo
+    from bball.data import ExperimentRunsRepository
 
     results = []
     db = Mongo().db
@@ -267,8 +266,8 @@ def test_rosters_repository():
     print("TEST: RostersRepository")
     print("=" * 60)
 
-    from bball_app.core.mongo import Mongo
-    from bball_app.core.data import RostersRepository
+    from bball.mongo import Mongo
+    from bball.data import RostersRepository
 
     results = []
     db = Mongo().db
@@ -291,8 +290,8 @@ def test_league_stats_cache():
     print("TEST: LeagueStatsCache")
     print("=" * 60)
 
-    from bball_app.core.mongo import Mongo
-    from bball_app.core.data import LeagueStatsCache
+    from bball.mongo import Mongo
+    from bball.data import LeagueStatsCache
 
     results = []
     db = Mongo().db

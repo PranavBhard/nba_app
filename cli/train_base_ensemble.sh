@@ -57,4 +57,4 @@ source ./setup.sh
 export PYTHONPATH=/Users/pranav/Documents/basketball
 
 # Run the ensemble training script
-python -m bball_app.cli.scripts.train_base_ensemble "$LEAGUE" "$@"
+python cli/scripts/train_base_ensemble.py "$LEAGUE" "$@"

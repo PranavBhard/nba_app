@@ -3,7 +3,11 @@
 
 import sys
 import os
-sys.path.append(os.getcwd())
+
+script_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.dirname(script_dir)
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
 
 import pandas as pd
 import numpy as np

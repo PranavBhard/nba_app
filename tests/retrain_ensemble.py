@@ -6,15 +6,15 @@ import os
 
 # Add project root to path
 script_dir = os.path.dirname(os.path.abspath(__file__))
-bball_app_dir = os.path.dirname(script_dir)
-project_root = os.path.dirname(bball_app_dir)
+bball_dir = os.path.dirname(script_dir)
+project_root = os.path.dirname(bball_dir)
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 import requests
 import json
 
-from bball_app.core.mongo import Mongo
+from bball.mongo import Mongo
 
 def main():
     print("=== RETRAINING ENSEMBLE TO TEST PRED_MARGIN FIX ===")

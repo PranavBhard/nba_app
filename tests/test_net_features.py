@@ -11,16 +11,13 @@ Tests:
 import sys
 import os
 
-# Add parent directory to path
 script_dir = os.path.dirname(os.path.abspath(__file__))
-# Script is in nba_app/tests/, so go up two levels to NBA/ (parent of nba_app/)
-nba_app_dir = os.path.dirname(script_dir)  # nba_app/
-nba_dir = os.path.dirname(nba_app_dir)  # NBA/
-if nba_dir not in sys.path:
-    sys.path.insert(0, nba_dir)
+project_root = os.path.dirname(script_dir)
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
 
-from bball_app.core.stats.handler import StatHandlerV2
-from bball_app.core.mongo import Mongo
+from bball.stats.handler import StatHandlerV2
+from bball.mongo import Mongo
 from datetime import date
 from collections import defaultdict
 

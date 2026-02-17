@@ -10,7 +10,7 @@ Runs all workflow tests to verify the layered architecture migration:
 
 Usage:
     source venv/bin/activate
-    PYTHONPATH=/Users/pranav/Documents/NBA python tests/run_workflow_tests.py
+    PYTHONPATH=/Users/pranav/Documents/basketball python tests/run_workflow_tests.py
 """
 
 import sys
@@ -20,8 +20,7 @@ import time
 
 # Add project root to path
 script_dir = os.path.dirname(os.path.abspath(__file__))
-nba_app_dir = os.path.dirname(script_dir)
-project_root = os.path.dirname(nba_app_dir)
+project_root = os.path.dirname(script_dir)
 
 
 def run_test_file(test_file: str) -> tuple:
@@ -43,7 +42,7 @@ def run_test_file(test_file: str) -> tuple:
             text=True,
             timeout=300,  # 5 minute timeout
             env=env,
-            cwd=nba_app_dir
+            cwd=project_root
         )
 
         output = result.stdout + result.stderr

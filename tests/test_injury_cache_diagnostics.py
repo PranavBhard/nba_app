@@ -10,7 +10,7 @@ This mirrors the SharedFeatureContext preloading logic to verify:
 
 Usage:
   source venv/bin/activate
-  PYTHONPATH=/Users/pranav/Documents/NBA \
+  PYTHONPATH=/Users/pranav/Documents/basketball \
     python tests/test_injury_cache_diagnostics.py
 """
 
@@ -19,16 +19,15 @@ import sys
 
 # Add project root to path
 script_dir = os.path.dirname(os.path.abspath(__file__))
-nba_app_dir = os.path.dirname(script_dir)
-project_root = os.path.dirname(nba_app_dir)
+project_root = os.path.dirname(script_dir)
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 
 def main() -> int:
-    from bball_app.core.mongo import Mongo
-    from bball_app.core.stats.handler import StatHandlerV2
-    from bball_app.core.utils.collection import import_collection
+    from bball.mongo import Mongo
+    from bball.stats.handler import StatHandlerV2
+    from bball.utils.collection import import_collection
 
     try:
         mongo = Mongo()

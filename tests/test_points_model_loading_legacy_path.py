@@ -22,10 +22,9 @@ import tempfile
 import numpy as np
 
 
-# Add parent of nba_app to path for imports
+# Add project root to path
 script_dir = os.path.dirname(os.path.abspath(__file__))
-nba_app_dir = os.path.dirname(script_dir)
-project_root = os.path.dirname(nba_app_dir)
+project_root = os.path.dirname(script_dir)
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
@@ -53,7 +52,7 @@ class DummyRegressor:
 
 
 def main() -> int:
-    from bball_app.core.services.prediction import PredictionService
+    from bball.services.prediction import PredictionService
 
     with tempfile.TemporaryDirectory() as td:
         model_name = "unit_test_points_model"

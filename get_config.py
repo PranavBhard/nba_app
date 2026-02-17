@@ -1,9 +1,14 @@
 #!/usr/bin/env python
 import sys
-sys.path.insert(0, '/Users/pranav/Documents/NBA')
+import os
+
+# Add project root to path
+script_dir = os.path.dirname(os.path.abspath(__file__))
+if script_dir not in sys.path:
+    sys.path.insert(0, script_dir)
 
 import json
-from bball_app.core.mongo import Mongo
+from bball.mongo import Mongo
 from bson import json_util
 
 db = Mongo().client.nba

@@ -55,4 +55,4 @@ source ./setup.sh
 export PYTHONPATH=/Users/pranav/Documents/basketball
 
 # Run the full pipeline
-python -m bball_app.core.pipeline.full_pipeline "$LEAGUE" "$@"
+python -m bball.pipeline.full_pipeline "$LEAGUE" "$@"

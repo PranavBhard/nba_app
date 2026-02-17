@@ -98,7 +98,7 @@ def test_unified_infrastructure():
         print(f"  {component}: {status}")
     
     print("\n📁 ARCHITECTURE OVERVIEW:")
-    print("  nba_app/core/")
+    print("  bball/")
     print("  ├── config_manager.py      # MongoDB config management")
     print("  ├── model_factory.py       # Unified model creation")
     print("  ├── feature_manager.py      # Feature blocks & naming")

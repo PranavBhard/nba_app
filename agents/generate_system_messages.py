@@ -34,10 +34,10 @@ from typing import Dict, List, Optional, Tuple
 import re
 import glob
 
-# Add parent directory to path for imports
+# Add project root to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from bball_app.core.features.registry import FeatureRegistry, FeatureGroups
+from bball.features.registry import FeatureRegistry, FeatureGroups
 
 
 # =============================================================================
@@ -203,8 +203,8 @@ MATCHUP_NETWORK_SOURCE_GLOBS = [
 CACHE_FILE_NAME = '.system_message_cache.json'
 
 
-def _get_nba_app_dir() -> str:
-    """Get the nba_app base directory."""
+def _get_project_root() -> str:
+    """Get the project root directory (basketball/)."""
     return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
@@ -216,26 +216,26 @@ def _hash_file(filepath: str) -> str:
 
 def _get_source_hashes() -> Dict[str, str]:
     """Get content hashes for all source files that affect rendered messages."""
-    nba_app_dir = _get_nba_app_dir()
+    project_root = _get_project_root()
     hashes = {}
     for rel_path in CORE_SOURCE_FILES:
-        full_path = os.path.join(nba_app_dir, rel_path)
+        full_path = os.path.join(project_root, rel_path)
         if os.path.exists(full_path):
             hashes[rel_path] = _hash_file(full_path)
 
     # Add matchup_network globs
     for pattern in MATCHUP_NETWORK_SOURCE_GLOBS:
-        full_pattern = os.path.join(nba_app_dir, pattern)
+        full_pattern = os.path.join(project_root, pattern)
         for fp in sorted(glob.glob(full_pattern, recursive=True)):
             if os.path.isfile(fp):
-                rel = os.path.relpath(fp, nba_app_dir)
+                rel = os.path.relpath(fp, project_root)
                 hashes[rel] = _hash_file(fp)
     return hashes
 
 
 def _get_cache_path() -> str:
     """Get path to the cache file."""
-    return os.path.join(_get_nba_app_dir(), 'agents', CACHE_FILE_NAME)
+    return os.path.join(_get_project_root(), 'agents', CACHE_FILE_NAME)
 
 
 def _load_cache() -> Dict:
@@ -302,7 +302,7 @@ def ensure_system_messages_current(silent: bool = True) -> bool:
         print("Regenerating system messages...")
 
     # Find and regenerate all agents with templates
-    agents_dir = os.path.join(_get_nba_app_dir(), 'agents')
+    agents_dir = os.path.join(_get_project_root(), 'agents')
     regenerated = []
 
     for item in os.listdir(agents_dir):
@@ -356,12 +356,12 @@ def process_template(template_content: str) -> str:
 INCLUDE_RE = re.compile(r"\{\{INCLUDE:([^}]+)\}\}")
 
 
-def process_includes(template_content: str, nba_app_dir: str) -> str:
+def process_includes(template_content: str, project_root: str) -> str:
     """
     Inline external markdown/text files into system message templates.
 
     Syntax:
-      {{INCLUDE:relative/path/from/nba_app_root}}
+      {{INCLUDE:relative/path/from/project_root}}
     """
     result = template_content
 
@@ -370,7 +370,7 @@ def process_includes(template_content: str, nba_app_dir: str) -> str:
         if not m:
             break
         rel_path = (m.group(1) or "").strip()
-        abs_path = os.path.join(nba_app_dir, rel_path)
+        abs_path = os.path.join(project_root, rel_path)
         try:
             with open(abs_path, "r", encoding="utf-8") as f:
                 included = f.read()
@@ -390,7 +390,7 @@ def generate_matchup_network_system_messages(agents_dir: str) -> bool:
     Writes:
       agents/matchup_network/system_messages/rendered/*.txt
     """
-    nba_app_dir = os.path.dirname(agents_dir)
+    project_root = os.path.dirname(agents_dir)
     base_dir = os.path.join(agents_dir, "matchup_network", "system_messages")
     rendered_dir = os.path.join(base_dir, "rendered")
     os.makedirs(rendered_dir, exist_ok=True)
@@ -412,7 +412,7 @@ def generate_matchup_network_system_messages(agents_dir: str) -> bool:
             with open(template_path, "r", encoding="utf-8") as f:
                 template_content = f.read()
             # First: inline includes (docs)
-            content = process_includes(template_content, nba_app_dir=nba_app_dir)
+            content = process_includes(template_content, project_root=project_root)
             # Then: core placeholders (optional)
             content = process_template(content)
             with open(output_path, "w", encoding="utf-8") as f:

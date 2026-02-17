@@ -15,16 +15,13 @@ import os
 from bson import ObjectId
 from datetime import datetime
 
-# Add parent directory to path (the directory containing nba_app folder)
+# Add project root to path
 script_dir = os.path.dirname(os.path.abspath(__file__))
-nba_app_dir = os.path.dirname(script_dir)  # This is the nba_app folder
-parent_of_nba_app = os.path.dirname(nba_app_dir)  # Directory containing nba_app
-if parent_of_nba_app not in sys.path:
-    sys.path.insert(0, parent_of_nba_app)
-
-# Now imports with nba_app prefix should work
-from bball_app.core.mongo import Mongo
-from bball_app.agents.modeler.modeler_agent import ModelerAgent
+project_root = os.path.dirname(script_dir)
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+from bball.mongo import Mongo
+from bball.agents.modeler.modeler_agent import ModelerAgent
 from langchain_core.messages import HumanMessage, AIMessage
 
 
@@ -115,7 +112,7 @@ def test_chat_flow(session_id: str, test_message: str = None):
     
     # Directly call build_dataset tool to replicate the error
     # This bypasses the LangChain agent and calls the tool directly
-    from bball_app.core.training.dataset_builder import DatasetBuilder
+    from bball.training.dataset_builder import DatasetBuilder
     
     dataset_builder = DatasetBuilder(db=db)
     

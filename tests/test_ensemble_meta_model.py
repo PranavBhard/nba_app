@@ -14,10 +14,10 @@ import os
 import json
 from unittest.mock import Mock, patch
 
-# Add parent directory to path for imports
-current_dir = os.path.dirname(os.path.abspath(__file__))
-parent_dir = os.path.dirname(current_dir)
-sys.path.insert(0, parent_dir)
+script_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.dirname(script_dir)
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
 
 def test_ensemble_training_route():
     """Test that ensemble training requests are properly routed."""
@@ -63,7 +63,7 @@ def test_stacking_tool_config_ids():
     print("\n🧪 Testing stacking tool with MongoDB config IDs...")
     
     try:
-        from bball_app.core.training.stacking_trainer import StackingTrainer
+        from bball.training.stacking_trainer import StackingTrainer
         
         # Create mock stacking trainer
         stacking_trainer = StackingTrainer()

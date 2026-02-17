@@ -5,13 +5,13 @@ import sys
 import os
 
 # Add project root to sys.path
-script_dir = os.path.dirname(os.path.abspath(__file__))  # bball_app/tests/
-bball_app_dir = os.path.dirname(script_dir)  # bball_app/
-project_root = os.path.dirname(bball_app_dir)  # basketball/
+script_dir = os.path.dirname(os.path.abspath(__file__))  # bball/tests/
+bball_dir = os.path.dirname(script_dir)  # bball/
+project_root = os.path.dirname(bball_dir)  # basketball/
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-from bball_app.core.mongo import Mongo
+from bball.mongo import Mongo
 
 def main():
     # Simple check without connecting to DB first

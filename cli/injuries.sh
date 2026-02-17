@@ -50,4 +50,4 @@ source ./setup.sh
 export PYTHONPATH=/Users/pranav/Documents/basketball
 
 # Run the injuries pipeline
-python -m bball_app.core.pipeline.injuries_pipeline "$LEAGUE" "$@"
+python -m bball.pipeline.injuries_pipeline "$LEAGUE" "$@"

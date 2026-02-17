@@ -21,10 +21,9 @@ from types import SimpleNamespace
 from unittest import mock
 
 
-# Add parent of nba_app to path for imports
-script_dir = os.path.dirname(os.path.abspath(__file__))  # nba_app/tests/
-nba_app_dir = os.path.dirname(script_dir)  # nba_app/
-project_root = os.path.dirname(nba_app_dir)  # parent of nba_app/
+# Add project root to path
+script_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.dirname(script_dir)
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
@@ -57,12 +56,12 @@ def test_use_master_training_branch_no_nameerror() -> bool:
     fake_db = _FakeDB()
 
     # Patch Mongo before importing web.app because web.app creates Mongo() at import time.
-    with mock.patch('bball_app.core.mongo.Mongo', autospec=True) as MongoPatched:
+    with mock.patch('bball.mongo.Mongo', autospec=True) as MongoPatched:
         MongoPatched.return_value = SimpleNamespace(db=fake_db)
 
-        if 'bball_app.web.app' in sys.modules:
-            del sys.modules['bball_app.web.app']
-        web_app = importlib.import_module('bball_app.web.app')
+        if 'bball.web.app' in sys.modules:
+            del sys.modules['bball.web.app']
+        web_app = importlib.import_module('bball.web.app')
 
     # Stub job progress update to avoid needing real job rows.
     web_app.update_job_progress = lambda *args, **kwargs: None
@@ -93,7 +92,7 @@ def test_use_master_training_branch_no_nameerror() -> bool:
 
         # Patch the imported-in-function module symbols via sys.modules trick:
         # We patch the actual core.services.training_data module functions/constants.
-        import bball_app.core.services.training_data as mtd
+        import bball.services.training_data as mtd
         mtd.MASTER_TRAINING_PATH = master_path
         mtd.generate_master_training_data = _fake_generate_master_training_data
         mtd.check_master_needs_regeneration = _fake_check_master_needs_regeneration

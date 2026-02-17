@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from bball_app.config import config
+from bball.config import config
 
 try:
     from langchain.agents import create_agent

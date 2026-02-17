@@ -33,17 +33,16 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Add project root to path
 script_dir = os.path.dirname(os.path.abspath(__file__))
-nba_app_dir = os.path.dirname(script_dir)
-project_root = os.path.dirname(nba_app_dir)
+project_root = os.path.dirname(script_dir)
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-from bball_app.core.mongo import Mongo
-from bball_app.core.models.bball_model import BballModel
-from bball_app.core.services.training_data import MASTER_TRAINING_PATH, get_all_possible_features
-from bball_app.core.features.dependencies import resolve_dependencies, categorize_features
-from bball_app.core.features.registry import FeatureRegistry
-from bball_app.core.features.prediction_mapping import (
+from bball.mongo import Mongo
+from bball.models.bball_model import BballModel
+from bball.services.training_data import MASTER_TRAINING_PATH, get_all_possible_features
+from bball.features.dependencies import resolve_dependencies, categorize_features
+from bball.features.registry import FeatureRegistry
+from bball.features.prediction_mapping import (
     is_pred_feature,
     parse_pred_feature,
     validate_pred_feature_model_type,
@@ -79,12 +78,12 @@ class SharedFeatureContext:
             feature_names: List of feature names that will be calculated
             preload_data: If True, preload games and player stats into memory
         """
-        from bball_app.core.mongo import Mongo
-        from bball_app.core.stats.handler import StatHandlerV2
-        from bball_app.core.stats.per_calculator import PERCalculator
-        from bball_app.core.data import GamesRepository, RostersRepository
-        from bball_app.core.utils.collection import import_collection
-        from bball_app.core.features.parser import parse_feature_name
+        from bball.mongo import Mongo
+        from bball.stats.handler import StatHandlerV2
+        from bball.stats.per_calculator import PERCalculator
+        from bball.data import GamesRepository, RostersRepository
+        from bball.utils.collection import import_collection
+        from bball.features.parser import parse_feature_name
 
         self.feature_names = feature_names
 
@@ -262,7 +261,7 @@ class SharedFeatureContext:
         Returns:
             Dict mapping feature names to their values
         """
-        from bball_app.core.features.parser import parse_feature_name
+        from bball.features.parser import parse_feature_name
 
         features_dict = {}
         game_date_str = f"{year}-{month:02d}-{day:02d}"
@@ -963,7 +962,7 @@ def _process_feature_chunk(
     if 'game_id' in chunk_df.columns:
         game_ids = [str(gid) for gid in chunk_df['game_id'].dropna().unique().tolist()]
         if game_ids:
-            from bball_app.core.mongo import Mongo
+            from bball.mongo import Mongo
             db = Mongo().db
             games_with_venue = db.stats_nba.find(
                 {'game_id': {'$in': game_ids}},
@@ -1205,7 +1204,7 @@ def calculate_feature_column(
         # Convert to strings - MongoDB stores game_id as string, CSV has int
         game_ids = [str(gid) for gid in df['game_id'].dropna().unique().tolist()]
         if game_ids:
-            from bball_app.core.mongo import Mongo
+            from bball.mongo import Mongo
             mongo_db = Mongo().db
             games_with_venue = mongo_db.stats_nba.find(
                 {'game_id': {'$in': game_ids}},
@@ -1269,7 +1268,7 @@ def extract_predictions_from_selected_model(
     Returns:
         DataFrame with added columns: pred_home_points, pred_away_points, pred_margin, pred_point_total
     """
-    from bball_app.core.models.points_regression import PointsRegressionTrainer
+    from bball.models.points_regression import PointsRegressionTrainer
     
     print("Loading selected point model config from MongoDB...")
     
@@ -1290,9 +1289,9 @@ def extract_predictions_from_selected_model(
 
     # Convert relative paths to absolute (for backward compatibility)
     if not os.path.isabs(model_path):
-        # Relative paths are relative to nba_app directory
-        nba_app_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        model_path = os.path.join(nba_app_dir, model_path)
+        # Relative paths are relative to project root
+        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        model_path = os.path.join(project_root, model_path)
 
     if not os.path.exists(model_path):
         raise FileNotFoundError(
@@ -1576,7 +1575,7 @@ def populate_columns(
         
         # Resolve dependencies
         print("Resolving feature dependencies...")
-        from bball_app.core.features.dependencies import resolve_dependencies
+        from bball.features.dependencies import resolve_dependencies
         all_features_set, dependency_map = resolve_dependencies(matching_features, include_transitive=True)
         categorized = categorize_features(matching_features, all_features_set)
         
@@ -1887,7 +1886,7 @@ Examples:
     db = None
     if args.job_id:
         try:
-            from bball_app.core.league_config import load_league_config
+            from bball.league_config import load_league_config
 
             # LeagueDbProxy for CLI scripts - maps db.jobs_nba to the league's jobs collection
             class LeagueDbProxy:
@@ -1978,7 +1977,7 @@ Examples:
     backup = args.backup and not args.no_backup
 
     # Get league-aware master CSV path if using default
-    from bball_app.core.services.training_data import get_master_training_path
+    from bball.services.training_data import get_master_training_path
     if args.master_csv == MASTER_TRAINING_PATH:
         # Using default path - get league-specific path instead
         args.master_csv = get_master_training_path(args.league)

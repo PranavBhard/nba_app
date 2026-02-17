@@ -8,10 +8,10 @@ This script:
 3. Removes the position fields from player_stats collection
 
 Usage:
-    python -m bball_app.cli.scripts.migrate_positions_to_players <league>
-    python -m bball_app.cli.scripts.migrate_positions_to_players nba
-    python -m bball_app.cli.scripts.migrate_positions_to_players cbb
-    python -m bball_app.cli.scripts.migrate_positions_to_players nba --dry-run
+    python -m bball.cli.scripts.migrate_positions_to_players <league>
+    python -m bball.cli.scripts.migrate_positions_to_players nba
+    python -m bball.cli.scripts.migrate_positions_to_players cbb
+    python -m bball.cli.scripts.migrate_positions_to_players nba --dry-run
 """
 
 import argparse
@@ -20,12 +20,12 @@ import os
 
 # Add project root to path
 script_dir = os.path.dirname(os.path.abspath(__file__))
-nba_app_dir = os.path.dirname(os.path.dirname(os.path.dirname(script_dir)))
-if nba_app_dir not in sys.path:
-    sys.path.insert(0, nba_app_dir)
+project_root = os.path.dirname(os.path.dirname(script_dir))
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
 
-from bball_app.core.mongo import Mongo
-from bball_app.core.league_config import load_league_config
+from bball.mongo import Mongo
+from bball.league_config import load_league_config
 
 
 def migrate_positions(league_id: str, dry_run: bool = False):

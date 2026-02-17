@@ -9,12 +9,12 @@ This script:
 4. Updates the players collection
 
 Usage:
-    python -m bball_app.cli.scripts.backfill_player_metadata <league>
-    python -m bball_app.cli.scripts.backfill_player_metadata nba
-    python -m bball_app.cli.scripts.backfill_player_metadata cbb
-    python -m bball_app.cli.scripts.backfill_player_metadata cbb --dry-run
-    python -m bball_app.cli.scripts.backfill_player_metadata cbb --limit 100
-    python -m bball_app.cli.scripts.backfill_player_metadata nba --season 2024-2025
+    python -m bball.cli.scripts.backfill_player_metadata <league>
+    python -m bball.cli.scripts.backfill_player_metadata nba
+    python -m bball.cli.scripts.backfill_player_metadata cbb
+    python -m bball.cli.scripts.backfill_player_metadata cbb --dry-run
+    python -m bball.cli.scripts.backfill_player_metadata cbb --limit 100
+    python -m bball.cli.scripts.backfill_player_metadata nba --season 2024-2025
 """
 
 import argparse
@@ -25,13 +25,12 @@ import time
 
 # Add project root to path
 script_dir = os.path.dirname(os.path.abspath(__file__))
-nba_app_dir = os.path.dirname(os.path.dirname(script_dir))
-project_root = os.path.dirname(nba_app_dir)
+project_root = os.path.dirname(os.path.dirname(script_dir))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-from bball_app.core.mongo import Mongo
-from bball_app.core.league_config import load_league_config
+from bball.mongo import Mongo
+from bball.league_config import load_league_config
 
 
 def fetch_player_from_espn(player_id: str, sport_path: str) -> dict:
@@ -109,7 +108,7 @@ def backfill_player_metadata(league_id: str, dry_run: bool = False, limit: int =
 
     # Determine season
     if not season:
-        from bball_app.core.utils import get_season_from_date
+        from bball.utils import get_season_from_date
         from datetime import date
         season = get_season_from_date(date.today(), league=league)
 

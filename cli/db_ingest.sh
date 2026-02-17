@@ -53,4 +53,4 @@ source ./setup.sh
 export PYTHONPATH=/Users/pranav/Documents/basketball
 
 # Run the full pipeline with training generation skipped
-python -m bball_app.core.pipeline.full_pipeline "$LEAGUE" --skip-training "$@"
+python -m bball.pipeline.full_pipeline "$LEAGUE" --skip-training "$@"

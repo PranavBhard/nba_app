@@ -20,10 +20,9 @@ from types import SimpleNamespace
 from unittest import mock
 
 
-# Add parent of nba_app to path for imports
-script_dir = os.path.dirname(os.path.abspath(__file__))  # nba_app/tests/
-nba_app_dir = os.path.dirname(script_dir)  # nba_app/
-project_root = os.path.dirname(nba_app_dir)  # parent of nba_app/
+# Add project root to path
+script_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.dirname(script_dir)
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
@@ -163,13 +162,13 @@ def test_web_predict_flow_regression(game_id: str = "401810422") -> bool:
     fake_db = _FakeDB(selected_classifier_config=selected_classifier_config)
 
     # Patch Mongo before importing the web module, since it instantiates Mongo() at import time.
-    with mock.patch('bball_app.core.mongo.Mongo', autospec=True) as MongoPatched:
+    with mock.patch('bball.mongo.Mongo', autospec=True) as MongoPatched:
         MongoPatched.return_value = SimpleNamespace(db=fake_db)
 
         # Import web.app fresh (in case a prior import exists in the interpreter)
-        if 'bball_app.web.app' in sys.modules:
-            del sys.modules['bball_app.web.app']
-        web_app = importlib.import_module('bball_app.web.app')
+        if 'bball.web.app' in sys.modules:
+            del sys.modules['bball.web.app']
+        web_app = importlib.import_module('bball.web.app')
 
     # Hard-override heavyweight pieces to keep the test deterministic.
     web_app.BballModel = _FakeBballModel

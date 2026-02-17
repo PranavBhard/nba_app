@@ -13,7 +13,7 @@ This intentionally runs as a lightweight integration test (Mongo + live ESPN).
 Usage
 -----
 source venv/bin/activate
-PYTHONPATH=/Users/pranav/Documents/NBA \
+PYTHONPATH=/Users/pranav/Documents/basketball \
   NBA_AUDIT_LIVE_ESPN=1 \
   NBA_AUDIT_TEAM=MIL \
   NBA_AUDIT_SEASON=2025-2026 \
@@ -40,17 +40,16 @@ from typing import Dict, Iterable, List, Optional, Set, Tuple
 import requests
 
 
-# Add project root to path (match other tests' convention)
+# Add project root to path
 script_dir = os.path.dirname(os.path.abspath(__file__))
-nba_app_dir = os.path.dirname(script_dir)
-project_root = os.path.dirname(nba_app_dir)
+project_root = os.path.dirname(script_dir)
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 
-from bball_app.core.mongo import Mongo
-from bball_app.core.data import GamesRepository, ESPNClient
-from bball_app.config import config as app_config
+from bball.mongo import Mongo
+from bball.data import GamesRepository, ESPNClient
+from bball.config import config as app_config
 
 
 NBA_SCOREBOARD_URL = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard"

@@ -7,21 +7,19 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-APP_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
-NBA_DIR="$(cd "$APP_DIR/.." && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 echo "================================"
 echo "Populate Vegas Lines"
 echo "================================"
-echo "App directory: $APP_DIR"
-echo "NBA directory: $NBA_DIR"
+echo "Project root: $PROJECT_ROOT"
 
 # Activate virtual environment
-cd "$APP_DIR"
+cd "$PROJECT_ROOT"
 source venv/bin/activate
 
 # Run the Python script with proper PYTHONPATH
-PYTHONPATH="$NBA_DIR" python -u "$SCRIPT_DIR/populate_vegas_lines.py"
+PYTHONPATH="$PROJECT_ROOT" python -u "$SCRIPT_DIR/populate_vegas_lines.py"
 
 echo ""
 echo "Done."
