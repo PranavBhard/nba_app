@@ -1,15 +1,11 @@
 """
 Statistics Calculation Module.
 
-This module contains all statistics calculation functionality:
-- StatHandlerV2: Main statistics handler for feature calculation
+This module contains statistics calculation functionality:
 - PERCalculator: Player Efficiency Rating calculations
 - EloCache: Elo rating cache and calculations
 - League stats caching
 """
-
-# Main statistics handler
-from bball.stats.handler import StatHandlerV2
 
 # PER Calculator
 from bball.stats.per_calculator import PERCalculator
@@ -28,8 +24,6 @@ from bball.stats.league_cache import (
 )
 
 __all__ = [
-    # Handler
-    'StatHandlerV2',
     # PER
     'PERCalculator',
     # Elo

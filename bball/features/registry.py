@@ -11,7 +11,7 @@ This module provides:
 Feature groupings (FeatureGroups) have been moved to bball.features.groups
 but are re-exported here for backward compatibility.
 
-All other modules (StatHandlerV2, BballModel, feature_sets, feature_name_parser)
+All other modules (BasketballFeatureComputer, BballModel, feature_sets, feature_name_parser)
 should import from this registry rather than defining their own stat lists.
 """
 
@@ -380,7 +380,7 @@ class FeatureRegistry(BaseFeatureRegistry):
         """
         Get the complete stat name to DB field mapping.
 
-        Used by StatHandlerV2 for computation.
+        Used by BasketballFeatureComputer for computation.
 
         Returns:
             Dict mapping stat names to DB field names

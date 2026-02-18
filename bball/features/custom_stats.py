@@ -1663,7 +1663,7 @@ def compute_injury(
 
     Returns 0.0 as placeholder — real computation happens in
     SharedFeatureGenerator._calculate_injury_features() which calls
-    StatHandlerV2.get_injury_features() in bulk.
+    InjuryFeatureCalculator.get_injury_features() in bulk.
     """
     return 0.0
 

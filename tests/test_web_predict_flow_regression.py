@@ -50,11 +50,18 @@ class _Collection:
                 return False
         return True
 
-    def find_one(self, query: dict):
+    def find_one(self, query: dict, projection=None):
         for doc in self._docs:
             if self._match(doc, query):
                 return doc
         return None
+
+    def find(self, query: dict = None, projection=None):
+        if query is None:
+            results = list(self._docs)
+        else:
+            results = [d for d in self._docs if self._match(d, query)]
+        return _Cursor(results)
 
     def update_one(self, query: dict, update_doc: dict, upsert: bool = False):
         doc = self.find_one(query)
@@ -79,12 +86,28 @@ class _Collection:
         return _UpdateResult(matched, modified, upserted_id)
 
 
+class _Cursor(list):
+    """Minimal MongoDB cursor that supports .sort() chaining."""
+
+    def sort(self, key_or_list, direction=None):
+        return self
+
+
 class _FakeDB:
     def __init__(self, selected_classifier_config: dict):
         self.model_configs = _Collection(initial=[], keyed_by="_id")
         self.model_config_nba = _Collection(initial=[selected_classifier_config], keyed_by="_id")
+        # nba_model_config is the collection name used by ClassifierConfigRepository
+        self.nba_model_config = self.model_config_nba
         self.model_config_points_nba = _Collection(initial=[], keyed_by="_id")
         self.stats_nba = _Collection(initial=[], keyed_by="game_id")
+        self._collections = {}
+
+    def __getitem__(self, name):
+        """Support db[collection_name] access for repositories."""
+        if hasattr(self, name):
+            return getattr(self, name)
+        return self._collections.setdefault(name, _Collection(initial=[], keyed_by="_id"))
 
 
 class _FakeMongo:
@@ -166,16 +189,22 @@ def test_web_predict_flow_regression(game_id: str = "401810422") -> bool:
         MongoPatched.return_value = SimpleNamespace(db=fake_db)
 
         # Import web.app fresh (in case a prior import exists in the interpreter)
-        if 'bball.web.app' in sys.modules:
-            del sys.modules['bball.web.app']
-        web_app = importlib.import_module('bball.web.app')
+        if 'web.app' in sys.modules:
+            del sys.modules['web.app']
+        web_app = importlib.import_module('web.app')
 
     # Hard-override heavyweight pieces to keep the test deterministic.
     web_app.BballModel = _FakeBballModel
 
     def _fake_create_model(config, use_artifacts: bool = True):
-        dummy_model = object()
-        dummy_scaler = object()
+        import numpy as np
+        dummy_model = SimpleNamespace(
+            predict_proba=lambda X: np.array([[0.45, 0.55]]),
+            predict=lambda X: np.array([1]),
+        )
+        dummy_scaler = SimpleNamespace(
+            transform=lambda X: X,
+        )
         feature_names = ['points|season|avg|diff']
         return dummy_model, dummy_scaler, feature_names
 
@@ -213,10 +242,9 @@ def test_web_predict_flow_regression(game_id: str = "401810422") -> bool:
     data = resp.get_json()
     assert data and data.get('success') is True, data
 
-    # Verify last_prediction persisted to the (fake) DB.
-    saved = web_app.db.stats_nba.find_one({'game_id': game_id})
+    # Verify prediction persisted to the (fake) DB's predictions collection.
+    saved = web_app.db['nba_model_predictions'].find_one({'game_id': game_id})
     assert saved is not None
-    assert 'last_prediction' in saved
 
     return True
 

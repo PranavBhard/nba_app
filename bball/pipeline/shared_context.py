@@ -54,7 +54,8 @@ class SharedFeatureContext:
         """
         self.preload_seasons = preload_seasons
         from bball.mongo import Mongo
-        from bball.stats.handler import StatHandlerV2
+        from bball.features.compute import BasketballFeatureComputer
+        from bball.features.injury import InjuryFeatureCalculator
         from bball.stats.per_calculator import PERCalculator
         from bball.data import GamesRepository, RostersRepository
         from bball.utils.collection import import_collection
@@ -74,6 +75,20 @@ class SharedFeatureContext:
         )
         self._needs_injuries = any(f.startswith("inj_") for f in feature_names)
         self._needs_elo = any(f.split("|", 1)[0].lower().startswith("elo") for f in feature_names)
+
+        # Categorize features upfront for efficient per-row processing
+        self._regular_features = []
+        self._per_feature_names = []
+        self._injury_feature_names = []
+        for fname in feature_names:
+            if '|' not in fname:
+                continue  # special features handled inline
+            elif fname.startswith('player_') or fname.startswith('per_available'):
+                self._per_feature_names.append(fname)
+            elif fname.startswith('inj_'):
+                self._injury_feature_names.append(fname)
+            else:
+                self._regular_features.append(fname)
 
         print("=" * 60)
         print(f"INITIALIZING SHARED FEATURE CONTEXT ({league_config.league_id.upper()})")
@@ -118,27 +133,28 @@ class SharedFeatureContext:
             self.all_games = import_collection(games_collection, query=query)
             print("Loaded game data.")
 
-        # Initialize stat handler with preloaded games
-        print("Initializing shared stat handler...")
-        self.stat_handler = StatHandlerV2(
-            statistics=[],
-            use_exponential_weighting=False,
-            preloaded_games=self.all_games,
-            db=self.db,
-            lazy_load=(not preload_games),
-            league=league_config,
-        )
-        # Set batch training mode to skip DB lookups for roster/player names
-        # These lookups are not needed during training - we use preloaded data only
-        self.stat_handler._batch_training_mode = True
+        # Initialize BasketballFeatureComputer for regular features
+        print("Initializing BasketballFeatureComputer...")
+        self._computer = BasketballFeatureComputer(db=self.db, league=league_config)
+        if self.all_games:
+            games_home, games_away = self.all_games
+            self._computer.set_preloaded_data(games_home, games_away)
 
         # Preload venue cache
         if preload_venues:
             print("Preloading venue cache...")
             try:
-                self.stat_handler.preload_venue_cache()
+                self._computer.preload_venue_cache()
             except Exception:
                 pass
+
+        # Initialize InjuryFeatureCalculator
+        self._injury_calculator = InjuryFeatureCalculator(
+            db=self.db, league=league_config, batch_training_mode=True,
+        )
+        if self.all_games:
+            games_home, games_away = self.all_games
+            self._injury_calculator.set_preloaded_data(games_home, games_away)
 
         # Initialize PER calculator if needed
         self.per_calculator = None
@@ -171,11 +187,11 @@ class SharedFeatureContext:
                 for date_data in season_data.values():
                     for game in date_data.values():
                         games_list.append(game)
-            self.stat_handler.preload_injury_cache(games_list)
+            self._injury_calculator.preload_injury_cache(games_list)
 
             # Precompute season severity values (O(G) instead of O(G²))
             print("Precomputing season injury severity values...")
-            self._precomputed_season_severity = self.stat_handler.precompute_season_severity(games_list)
+            self._precomputed_season_severity = self._injury_calculator.precompute_season_severity(games_list)
 
         # Preload elo cache if elo features are needed
         if self._needs_elo:
@@ -184,8 +200,8 @@ class SharedFeatureContext:
                 from bball.stats.elo_cache import EloCache
                 self._elo_cache = EloCache(self.db, league=league_config)
                 self._elo_cache.preload(seasons=self.preload_seasons)
-                # Inject into stat handler so it uses the preloaded cache
-                self.stat_handler._elo_cache = self._elo_cache
+                # Inject into computer so it uses the preloaded cache
+                self._computer._elo_cache = self._elo_cache
             except Exception as e:
                 print(f"Warning: Could not preload elo cache: {e}")
 
@@ -301,9 +317,8 @@ class SharedFeatureContext:
         if venue_guid is None and game_id:
             venue_guid = self.venue_guid_cache.get(str(game_id))
 
-        # Calculate each feature
+        # Handle special non-pipe features
         for feature_name in self.feature_names:
-            # Handle special non-pipe features
             if '|' not in feature_name:
                 if feature_name == 'SeasonStartYear':
                     features_dict[feature_name] = int(year) if int(month) >= 10 else int(year) - 1
@@ -317,30 +332,21 @@ class SharedFeatureContext:
                     features_dict[feature_name] = 0.0
                 else:
                     features_dict[feature_name] = 0.0
-                continue
 
-            # Skip PER and injury features - handled separately below
-            if feature_name.startswith('player_') or feature_name.startswith('per_available'):
-                continue
-            if feature_name.startswith('inj_'):
-                continue
-
-            # Regular stat feature - use shared stat handler
+        # Batch compute regular features via BasketballFeatureComputer
+        if self._regular_features:
             try:
-                value = self.stat_handler.calculate_feature(
-                    feature_name, home_team, away_team, season,
-                    year, month, day, self.per_calculator, venue_guid
+                regular_results = self._computer.compute_matchup_features(
+                    self._regular_features, home_team, away_team, season,
+                    game_date_str, venue_guid=venue_guid,
                 )
-                features_dict[feature_name] = value if value is not None else 0.0
+                features_dict.update(regular_results)
             except Exception:
-                features_dict[feature_name] = 0.0
+                for fname in self._regular_features:
+                    features_dict[fname] = 0.0
 
         # Add PER features if needed
-        has_per_features = any(
-            fname.startswith('player_') or fname.startswith('per_available')
-            for fname in self.feature_names
-        )
-        if has_per_features and self.per_calculator:
+        if self._per_feature_names and self.per_calculator:
             injured_players_dict = None
             try:
                 # Use preloaded games cache - NO DB CALLS in row iterations
@@ -372,20 +378,17 @@ class SharedFeatureContext:
                     game_id=game_id  # Enable cross-team aggregation for traded players
                 )
                 if per_features:
-                    for fname in self.feature_names:
-                        if fname.startswith('player_') or fname.startswith('per_available'):
-                            if fname in per_features:
-                                features_dict[fname] = per_features[fname]
-                            else:
-                                features_dict[fname] = 0.0
+                    for fname in self._per_feature_names:
+                        if fname in per_features:
+                            features_dict[fname] = per_features[fname]
+                        else:
+                            features_dict[fname] = 0.0
             except Exception:
-                for fname in self.feature_names:
-                    if fname.startswith('player_') or fname.startswith('per_available'):
-                        features_dict[fname] = 0.0
+                for fname in self._per_feature_names:
+                    features_dict[fname] = 0.0
 
         # Add injury features if needed
-        has_injury_features = any(fname.startswith('inj_') for fname in self.feature_names)
-        if has_injury_features:
+        if self._injury_feature_names:
             try:
                 # Use preloaded games cache - NO DB CALLS in row iterations
                 game_doc = None
@@ -395,19 +398,18 @@ class SharedFeatureContext:
                         if home_team in games_home[season][game_date_str]:
                             game_doc = games_home[season][game_date_str][home_team]
 
-                injury_features = self.stat_handler.get_injury_features(
+                injury_features = self._injury_calculator.get_injury_features(
                     home_team, away_team, season, year, month, day,
                     game_doc=game_doc,
                     per_calculator=self.per_calculator,
                     precomputed_season_severity=self._precomputed_season_severity
                 )
                 if injury_features:
-                    for fname in self.feature_names:
-                        if fname.startswith('inj_'):
-                            if fname in injury_features:
-                                features_dict[fname] = injury_features[fname]
-                            else:
-                                features_dict[fname] = 0.0
+                    for fname in self._injury_feature_names:
+                        if fname in injury_features:
+                            features_dict[fname] = injury_features[fname]
+                        else:
+                            features_dict[fname] = 0.0
 
                 # Handle share features from existing raw values
                 if existing_row_data and self.per_calculator:
@@ -417,9 +419,8 @@ class SharedFeatureContext:
                     )
 
             except Exception:
-                for fname in self.feature_names:
-                    if fname.startswith('inj_'):
-                        features_dict[fname] = 0.0
+                for fname in self._injury_feature_names:
+                    features_dict[fname] = 0.0
 
         # Ensure all requested features have a value
         for fname in self.feature_names:

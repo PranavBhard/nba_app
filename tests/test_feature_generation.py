@@ -13,7 +13,7 @@ KNOWN ISSUES:
 - travel|days_2: Some venue_guids in games are missing from nba_venues collection
   (data sync issue - need to populate missing venues)
 - three_pct_matchup: Feature is registered but no calculation handler exists
-  (needs implementation in stat_handler.py)
+  (needs implementation)
 
 Usage:
     source venv/bin/activate
@@ -30,8 +30,17 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 from bball.mongo import Mongo
-from bball.stats.handler import StatHandlerV2
+from bball.features.compute import BasketballFeatureComputer
 from bball.models.bball_model import BballModel
+
+
+def _compute_single(computer, feature_name, home, away, season, year, month, day, venue_guid=None):
+    """Helper: compute a single feature via compute_matchup_features and return its value."""
+    game_date = f"{year}-{month:02d}-{day:02d}"
+    results = computer.compute_matchup_features(
+        [feature_name], home, away, season, game_date, venue_guid=venue_guid
+    )
+    return results.get(feature_name, 0.0)
 
 
 def test_travel_features():
@@ -41,49 +50,33 @@ def test_travel_features():
     print("=" * 60)
 
     db = Mongo().db
-    sh = StatHandlerV2(db=db, statistics=[])
+    computer = BasketballFeatureComputer(db=db)
+    computer.preload_venue_cache()
 
     results = []
 
-    # First verify venue data exists for a known venue
-    lal_venue_guid = 'cd3244eb-8bc6-36ec-9ce7-5f620a9ea5d6'
-    lal_coords = sh._get_venue_location(lal_venue_guid)
-    print(f"\nLAL venue coords: {lal_coords}")
-
-    if lal_coords[0] is None:
-        print("  ✗ SKIP: LAL venue missing from nba_venues - cannot test travel")
-        results.append(('travel_venue_data', False))
-        return results
-
-    # Test travel calculation logic with a game we know has venue data
-    # Use an older game where both teams have known venues
+    # Test travel calculation via the public API
     # LAL vs BOS at LAL (2024-01-15)
     print("\n=== Testing travel calculation logic ===")
 
-    # Get LAL's games in last 5 days to see if they had travel
-    games = sh._get_team_games_last_n_days('LAL', 2024, 1, 15, '2023-2024', 5)
-    print(f"LAL games in 5 days before 2024-01-15: {len(games)}")
-    for g in games:
-        venue_guid = g.get('venue_guid')
-        print(f"  {g.get('date')}: venue={venue_guid}")
-        if venue_guid:
-            coords = sh._get_venue_location(venue_guid)
-            print(f"    coords: {coords}")
-
-    # Test travel calculation
-    travel = sh._calculate_travel_distance('LAL', 2024, 1, 15, '2023-2024', 5, lal_venue_guid)
-    print(f"\nLAL travel (last 5 days, with target venue): {travel:.1f} miles")
-
-    # Travel should be >= 0 (logic test)
-    is_valid = travel >= 0
-    status = "✓ PASS" if is_valid else "✗ FAIL"
-    print(f"  {status}: Travel calculation returned valid value")
-    results.append(('travel_calculation_logic', is_valid))
+    home, away = 'LAL', 'BOS'
+    season = '2023-2024'
+    year, month, day = 2024, 1, 15
+    lal_venue_guid = 'cd3244eb-8bc6-36ec-9ce7-5f620a9ea5d6'
 
     # Test longer time periods (more likely to have data)
     for period in ['days_12', 'season']:
-        val = sh.calculate_feature(f'travel|{period}|avg|home', 'LAL', 'BOS', '2023-2024', 2024, 1, 15)
-        print(f"  travel|{period}|avg|home: {val:.1f}")
+        feature_name = f'travel|{period}|avg|home'
+        val = _compute_single(computer, feature_name, home, away, season, year, month, day, venue_guid=lal_venue_guid)
+        print(f"  {feature_name}: {val:.1f}")
+
+    # Travel should be >= 0 (logic test)
+    feature_name = 'travel|season|avg|home'
+    travel = _compute_single(computer, feature_name, home, away, season, year, month, day, venue_guid=lal_venue_guid)
+    is_valid = travel >= 0
+    status = "PASS" if is_valid else "FAIL"
+    print(f"  {status}: Travel calculation returned valid value ({travel:.1f})")
+    results.append(('travel_calculation_logic', is_valid))
 
     return results
 
@@ -95,7 +88,7 @@ def test_est_possessions_features():
     print("=" * 60)
 
     db = Mongo().db
-    sh = StatHandlerV2(db=db, statistics=[])
+    computer = BasketballFeatureComputer(db=db)
 
     # Test mid-season game with enough data
     home, away = 'LAL', 'BOS'
@@ -109,11 +102,11 @@ def test_est_possessions_features():
 
     for tp in time_periods:
         feature_name = f'est_possessions|{tp}|derived|none'
-        val = sh.calculate_feature(feature_name, home, away, season, year, month, day)
+        val = _compute_single(computer, feature_name, home, away, season, year, month, day)
 
         # Est possessions should be ~95-110 (typical NBA pace)
         is_valid = 90 < val < 120
-        status = "✓ PASS" if is_valid else "✗ FAIL"
+        status = "PASS" if is_valid else "FAIL"
         print(f"  {feature_name}: {val:.2f} {status}")
         results.append((feature_name, is_valid))
 
@@ -127,7 +120,7 @@ def test_exp_points_features():
     print("=" * 60)
 
     db = Mongo().db
-    sh = StatHandlerV2(db=db, statistics=[])
+    computer = BasketballFeatureComputer(db=db)
 
     home, away = 'LAL', 'BOS'
     season = '2023-2024'
@@ -147,8 +140,13 @@ def test_exp_points_features():
         'exp_points_matchup|season|derived|away',
     ]
 
+    game_date = f"{year}-{month:02d}-{day:02d}"
+    feature_results = computer.compute_matchup_features(
+        test_features, home, away, season, game_date
+    )
+
     for feature_name in test_features:
-        val = sh.calculate_feature(feature_name, home, away, season, year, month, day)
+        val = feature_results.get(feature_name, 0.0)
 
         # Expected points should be ~95-125 for home/away, reasonable range for diff
         if 'diff' in feature_name:
@@ -156,7 +154,7 @@ def test_exp_points_features():
         else:
             is_valid = 80 < val < 140
 
-        status = "✓ PASS" if is_valid else "✗ FAIL"
+        status = "PASS" if is_valid else "FAIL"
         print(f"  {feature_name}: {val:.2f} {status}")
         results.append((feature_name, is_valid))
 
@@ -167,14 +165,14 @@ def test_three_pct_matchup_features():
     """Test three_pct_matchup feature calculation.
 
     KNOWN ISSUE: three_pct_matchup is registered in FeatureRegistry but has no
-    calculation handler implemented in stat_handler.py. This test documents the issue.
+    calculation handler implemented. This test documents the issue.
     """
     print("\n" + "=" * 60)
     print("TEST: Three Point Matchup Features (KNOWN ISSUE)")
     print("=" * 60)
 
     db = Mongo().db
-    sh = StatHandlerV2(db=db, statistics=[])
+    computer = BasketballFeatureComputer(db=db)
 
     home, away = 'LAL', 'BOS'
     season = '2023-2024'
@@ -182,7 +180,7 @@ def test_three_pct_matchup_features():
 
     print(f"\nGame: {away} @ {home} ({year}-{month:02d}-{day:02d})")
     print("\nNOTE: three_pct_matchup is NOT IMPLEMENTED - all values will be 0")
-    print("This feature needs a calculation handler in stat_handler.py")
+    print("This feature needs a calculation handler")
 
     results = []
 
@@ -192,21 +190,24 @@ def test_three_pct_matchup_features():
         'three_pct_matchup|games_10|derived|away',
     ]
 
-    for feature_name in test_features:
-        val = sh.calculate_feature(feature_name, home, away, season, year, month, day)
+    game_date = f"{year}-{month:02d}-{day:02d}"
+    feature_results = computer.compute_matchup_features(
+        test_features, home, away, season, game_date
+    )
 
+    for feature_name in test_features:
+        val = feature_results.get(feature_name, 0.0)
         # Currently returns 0 - document this as known issue
-        # When implemented, should be ~0.30-0.45 (30-45%)
         print(f"  {feature_name}: {val:.4f} (NOT IMPLEMENTED)")
 
     # Test underlying stats that SHOULD work
     print("\n  Underlying stats that work:")
-    three_pct = sh.calculate_feature('three_pct|games_10|avg|home', home, away, season, year, month, day)
+    three_pct = _compute_single(computer, 'three_pct|games_10|avg|home', home, away, season, year, month, day)
     print(f"    three_pct|games_10|avg|home: {three_pct:.2f}%")
 
     # Don't fail the test - just document the known issue
     results.append(('three_pct_matchup_not_implemented', True))  # Known issue acknowledged
-    print("\n  ⚠ KNOWN ISSUE: Feature registered but not implemented")
+    print("\n  KNOWN ISSUE: Feature registered but not implemented")
 
     return results
 
@@ -218,7 +219,7 @@ def test_pace_interaction_features():
     print("=" * 60)
 
     db = Mongo().db
-    sh = StatHandlerV2(db=db, statistics=[])
+    computer = BasketballFeatureComputer(db=db)
 
     home, away = 'LAL', 'BOS'
     season = '2023-2024'
@@ -234,12 +235,17 @@ def test_pace_interaction_features():
         'pace_interaction|season|harmonic_mean|none',
     ]
 
+    game_date = f"{year}-{month:02d}-{day:02d}"
+    feature_results = computer.compute_matchup_features(
+        test_features, home, away, season, game_date
+    )
+
     for feature_name in test_features:
-        val = sh.calculate_feature(feature_name, home, away, season, year, month, day)
+        val = feature_results.get(feature_name, 0.0)
 
         # Pace interaction should be ~95-110
         is_valid = 90 < val < 115
-        status = "✓ PASS" if is_valid else "✗ FAIL"
+        status = "PASS" if is_valid else "FAIL"
         print(f"  {feature_name}: {val:.2f} {status}")
         results.append((feature_name, is_valid))
 
@@ -294,14 +300,14 @@ def test_build_features_dict_with_venue():
     # Verify est_possessions works (the fix we made)
     est_poss = features_dict.get('est_possessions|season|derived|none', 0.0)
     is_valid = 90 < est_poss < 120
-    status = "✓ PASS" if is_valid else "✗ FAIL"
+    status = "PASS" if is_valid else "FAIL"
     print(f"\n  {status}: est_possessions|season|derived|none = {est_poss:.2f} (expected 90-120)")
     results.append(('build_features_dict_est_possessions', is_valid))
 
     # Verify venue_guid is being passed (travel should be >= 0)
     travel = features_dict.get('travel|days_5|avg|home', 0.0)
     is_valid_travel = travel >= 0
-    status = "✓ PASS" if is_valid_travel else "✗ FAIL"
+    status = "PASS" if is_valid_travel else "FAIL"
     print(f"  {status}: travel|days_5|avg|home = {travel:.1f} (expected >= 0)")
     results.append(('build_features_dict_travel', is_valid_travel))
 
@@ -311,7 +317,7 @@ def test_build_features_dict_with_venue():
 def test_populate_master_training_venue_lookup():
     """Test that the venue_guid lookup in populate_master_training_cols works correctly."""
     print("\n" + "=" * 60)
-    print("TEST: Venue GUID Lookup (int→string conversion)")
+    print("TEST: Venue GUID Lookup (int->string conversion)")
     print("=" * 60)
 
     import pandas as pd
@@ -349,7 +355,7 @@ def test_populate_master_training_venue_lookup():
     print(f"  venue_guid found: {result}")
 
     is_valid = len(venue_guid_cache) > 0 and result is not None
-    status = "✓ PASS" if is_valid else "✗ FAIL"
+    status = "PASS" if is_valid else "FAIL"
     print(f"\n{status}: Venue lookup working correctly")
 
     return [('venue_guid_lookup', is_valid)]
@@ -388,11 +394,11 @@ def main():
         print("\nFailed tests:")
         for name, result in all_results:
             if not result:
-                print(f"  ✗ {name}")
+                print(f"  X {name}")
 
     print("\n" + "=" * 60)
     if failed == 0:
-        print("ALL TESTS PASSED ✓")
+        print("ALL TESTS PASSED")
     else:
         print(f"TESTS FAILED: {failed} failures")
     print("=" * 60)

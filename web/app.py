@@ -989,8 +989,8 @@ def load_model_from_mongo_config(model_instance: NBAModel, config_doc: dict) -> 
         model_instance.feature_names = feature_cols
         
         # NEW ARCHITECTURE: Feature names are self-describing (e.g., 'off_rtg|season|avg|home')
-        # StatHandlerV2 uses calculate_feature() which parses feature names directly - no stat tokens needed!
-        # StatHandlerV2 is initialized with statistics=[] (empty list) in the new architecture
+        # BasketballFeatureComputer uses compute_matchup_features() which parses feature names directly - no stat tokens needed!
+        # The feature computer is initialized without needing a stat list in the new architecture
         
         # Set classifier_features to feature_cols for backward compatibility (though it's not used in prediction)
         # In the new architecture, feature_names is the source of truth for what to calculate
@@ -3390,7 +3390,9 @@ def get_calculation_details(league_id=None):
         # Get model and calculators
         model = get_bball_model()
         per_calculator = get_per_calculator()
-        stat_handler = model.stat_handler  # StatHandlerV2 instance
+        # Lazy-create injury calculator for team injury feature details
+        from bball.features.injury import InjuryFeatureCalculator
+        injury_calculator = InjuryFeatureCalculator(db=db, league=getattr(g, 'league', None))
         
         # Get players from nba_rosters (excluding injured)
         roster_doc = db.nba_rosters.find_one({'season': season, 'team': team})
@@ -3458,14 +3460,13 @@ def get_calculation_details(league_id=None):
         ) if per_calculator else None
         
         # Calculate injury features
-        game_date_obj = game_date
         injured_ids = [str(p['player_id']) for p in roster if p.get('injured', False)]
-        
+
         # Get injury features for this team
-        injury_features = stat_handler._calculate_team_injury_features(
-            team, season, game_date_str, game_date_obj, injured_ids, 
-            per_calculator, recency_decay_k=15.0
-        ) if stat_handler else {}
+        injury_features = injury_calculator.compute_team_injury_features(
+            team, season, game_date_str, injured_ids,
+            per_calculator=per_calculator, recency_decay_k=15.0
+        ) if injury_calculator else {}
         
         # Calculate opponent injury features for diff calculation
         opponent_roster_doc = db.nba_rosters.find_one({'season': season, 'team': opponent_team})
@@ -3474,10 +3475,10 @@ def get_calculation_details(league_id=None):
             opponent_roster = opponent_roster_doc.get('roster', [])
             opponent_injured_ids = [str(p['player_id']) for p in opponent_roster if p.get('injured', False)]
         
-        opponent_injury_features = stat_handler._calculate_team_injury_features(
-            opponent_team, season, game_date_str, game_date_obj, opponent_injured_ids,
-            per_calculator, recency_decay_k=15.0
-        ) if stat_handler else {}
+        opponent_injury_features = injury_calculator.compute_team_injury_features(
+            opponent_team, season, game_date_str, opponent_injured_ids,
+            per_calculator=per_calculator, recency_decay_k=15.0
+        ) if injury_calculator else {}
         
         # Calculate player-level features (WITHOUT injured)
         player_features = {}

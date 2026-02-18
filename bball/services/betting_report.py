@@ -30,6 +30,7 @@ class BetRecommendation:
     model_odds: int  # American odds
     edge: float  # p_model - p_market
     edge_kelly: float  # Kelly edge
+    dog_variance_penalty: float  # Underdog probability coefficient
     stake_fraction: float  # Fraction of bankroll
     stake: float  # Actual stake amount
     adjusted_stake: float  # Adjusted stake with probability-based confidence
@@ -293,6 +294,7 @@ def generate_betting_report(
                 model_odds=_prob_to_american_odds(model_home_prob),
                 edge=home_edge,
                 edge_kelly=stake_info['edge_kelly'],
+                dog_variance_penalty=stake_info['dog_variance_penalty'],
                 stake_fraction=stake_info['stake_fraction'],
                 stake=stake_info['stake'],
                 adjusted_stake=stake_info['adjusted_stake'],
@@ -317,6 +319,7 @@ def generate_betting_report(
                 model_odds=_prob_to_american_odds(model_away_prob),
                 edge=away_edge,
                 edge_kelly=stake_info['edge_kelly'],
+                dog_variance_penalty=stake_info['dog_variance_penalty'],
                 stake_fraction=stake_info['stake_fraction'],
                 stake=stake_info['stake'],
                 adjusted_stake=stake_info['adjusted_stake'],
@@ -350,6 +353,7 @@ def generate_betting_report(
                 model_odds=_prob_to_american_odds(best_prob),
                 edge=best_edge,
                 edge_kelly=stake_info['edge_kelly'],
+                dog_variance_penalty=stake_info['dog_variance_penalty'],
                 stake_fraction=stake_info['stake_fraction'],
                 stake=stake_info['stake'],
                 adjusted_stake=stake_info['adjusted_stake'],

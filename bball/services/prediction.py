@@ -87,7 +87,7 @@ class PredictionContext:
         self.league = league
         self.teams = teams
 
-        # Preloaded caches (same structure as StatHandlerV2/PERCalculator expect)
+        # Preloaded caches (same structure as BasketballFeatureComputer/PERCalculator expect)
         self.games_home = {}   # {season: {date: {team: game_doc}}}
         self.games_away = {}   # {season: {date: {team: game_doc}}}
         self.player_stats = defaultdict(list)  # {(team, season): [player_game_records]}
@@ -159,7 +159,7 @@ class PredictionContext:
         games = list(self.db[games_coll].find(query, projection))
         self._games_loaded = len(games)
 
-        # Build nested dict structure matching StatHandlerV2's expected format
+        # Build nested dict structure matching BasketballFeatureComputer's expected format
         for game in games:
             season = game.get('season')
             date_str = str(game.get('date', ''))[:10]  # Ensure YYYY-MM-DD format

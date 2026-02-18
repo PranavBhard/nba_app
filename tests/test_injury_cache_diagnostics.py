@@ -26,7 +26,7 @@ if project_root not in sys.path:
 
 def main() -> int:
     from bball.mongo import Mongo
-    from bball.stats.handler import StatHandlerV2
+    from bball.features.injury import InjuryFeatureCalculator
     from bball.utils.collection import import_collection
 
     try:
@@ -66,20 +66,15 @@ def main() -> int:
 
     print(f"Expected team-seasons from games: {len(team_seasons)}")
 
-    print("\nInitializing StatHandlerV2 (preloaded games)...")
-    stat_handler = StatHandlerV2(
-        statistics=[],
-        use_exponential_weighting=False,
-        preloaded_games=all_games,
-        db=db,
-        lazy_load=False
-    )
+    print("\nInitializing InjuryFeatureCalculator (preloaded games)...")
+    calculator = InjuryFeatureCalculator(db=db)
+    calculator.set_preloaded_data(games_home, games_away)
 
     print("Preloading injury cache...")
-    stat_handler.preload_injury_cache(games_list)
+    calculator.preload_injury_cache(games_list)
 
-    cache_loaded = getattr(stat_handler, "_injury_cache_loaded", False)
-    cache = getattr(stat_handler, "_injury_preloaded_players", {})
+    cache_loaded = getattr(calculator, "_injury_cache_loaded", False)
+    cache = getattr(calculator, "_injury_preloaded_players", {})
     cache_keys = set(cache.keys())
 
     print(f"\n_cache_loaded: {cache_loaded}")

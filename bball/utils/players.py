@@ -13,7 +13,7 @@ This module is specifically designed for PREDICTION workflows, NOT training data
 - Uses: stats_nba.homeTeam.injured_players and stats_nba.awayTeam.injured_players
 - These are HISTORICAL snapshots captured when games were actually played
 - Represents ground truth for "who was actually injured when this game happened"
-- Handled by: StatHandlerV2.getInjuryFeatures() and per_calculator with game_doc.injured_players
+- Handled by: InjuryFeatureCalculator.get_injury_features() and per_calculator with game_doc.injured_players
 
 ### PREDICTION (USE THIS MODULE):
 - Uses: nba_rosters.roster[].injured, nba_rosters.roster[].starter, nba_rosters.roster[].disabled flags
@@ -25,7 +25,7 @@ This module is specifically designed for PREDICTION workflows, NOT training data
 - Web app prediction endpoints (api/predict)
 - Agent prediction tools (matchup_predict.py)
 - NOT for training data generation (BballModel.create_training_data)
-- NOT for feature calculation for historical games (StatHandlerV2, per_calculator)
+- NOT for feature calculation for historical games (InjuryFeatureCalculator, per_calculator)
 
 Uses data layer repositories for all database operations.
 """

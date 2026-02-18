@@ -28,6 +28,12 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 
+class _Cursor(list):
+    """Minimal MongoDB cursor supporting .sort() chaining."""
+    def sort(self, key_or_list, direction=None):
+        return self
+
+
 class _Collection:
     def __init__(self):
         self._docs = []
@@ -45,11 +51,21 @@ class _Collection:
     def find_one(self, *args, **kwargs):
         return None
 
+    def find(self, *args, **kwargs):
+        return _Cursor()
+
 
 class _FakeDB:
     def __init__(self):
         self.jobs_nba = _Collection()
         self.model_config_nba = _Collection()
+        self._collections = {}
+
+    def __getitem__(self, name):
+        """Support db[collection_name] access for ModelConfigManager etc."""
+        if hasattr(self, name):
+            return getattr(self, name)
+        return self._collections.setdefault(name, _Collection())
 
 
 def test_use_master_training_branch_no_nameerror() -> bool:
@@ -59,15 +75,14 @@ def test_use_master_training_branch_no_nameerror() -> bool:
     with mock.patch('bball.mongo.Mongo', autospec=True) as MongoPatched:
         MongoPatched.return_value = SimpleNamespace(db=fake_db)
 
-        if 'bball.web.app' in sys.modules:
-            del sys.modules['bball.web.app']
-        web_app = importlib.import_module('bball.web.app')
+        if 'web.app' in sys.modules:
+            del sys.modules['web.app']
+        web_app = importlib.import_module('web.app')
 
     # Stub job progress update to avoid needing real job rows.
     web_app.update_job_progress = lambda *args, **kwargs: None
 
-    # Ensure the feature-flag helper exists (this previously regressed via a wrong function name)
-    assert hasattr(web_app, 'infer_feature_flags_from_features')
+    # Feature flag inference is done inline in web/app.py (has_per_features, has_injury_features, etc.)
 
     # Create a temp master CSV and a fake extracted CSV output.
     with tempfile.TemporaryDirectory() as td:

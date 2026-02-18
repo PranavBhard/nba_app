@@ -2,8 +2,7 @@
 Test that vegas_* features are properly loaded in the prediction workflow.
 
 This verifies that PredictionContext preloads vegas/pregame_lines data
-so that StatHandlerV2._get_vegas_feature() can access them without
-falling back to per-feature DB queries.
+so that BasketballFeatureComputer can access them through compute_matchup_features.
 """
 
 import pytest
@@ -42,13 +41,12 @@ class TestVegasPredictionFlow:
         assert projection['vegas'] == 1, "'vegas' should be projected (value=1)"
         assert projection['pregame_lines'] == 1, "'pregame_lines' should be projected (value=1)"
 
-    def test_stat_handler_uses_preloaded_vegas_data(self):
-        """Verify StatHandlerV2._get_vegas_feature() uses preloaded games_home data."""
-        from bball.stats.handler import StatHandlerV2
+    def test_computer_uses_preloaded_vegas_data(self):
+        """Verify BasketballFeatureComputer computes vegas features from preloaded games_home data."""
+        from bball.features.compute import BasketballFeatureComputer
 
-        # Create handler with preloaded games data containing vegas
-        handler = StatHandlerV2(statistics=[], db=None, league=None)
-        handler.games_home = {
+        # Create computer with preloaded games data containing vegas
+        games_home = {
             '2024-2025': {
                 '2025-01-15': {
                     'BOS': {
@@ -65,31 +63,46 @@ class TestVegasPredictionFlow:
                 }
             }
         }
+        computer = BasketballFeatureComputer(db=None)
+        computer.set_preloaded_data(games_home, {})
+
+        game_date = '2025-01-15'
 
         # Test vegas_ML
-        home_ml = handler._get_vegas_feature('vegas_ML', 'BOS', 'LAL', 2025, 1, 15, 'home')
+        results = computer.compute_matchup_features(
+            ['vegas_ML|none|raw|home', 'vegas_ML|none|raw|away'],
+            'BOS', 'LAL', '2024-2025', game_date
+        )
+        home_ml = results.get('vegas_ML|none|raw|home', 0.0)
         assert home_ml == -150.0, f"Expected home_ML=-150, got {home_ml}"
 
-        away_ml = handler._get_vegas_feature('vegas_ML', 'BOS', 'LAL', 2025, 1, 15, 'away')
+        away_ml = results.get('vegas_ML|none|raw|away', 0.0)
         assert away_ml == 130.0, f"Expected away_ML=130, got {away_ml}"
 
         # Test vegas_spread
-        home_spread = handler._get_vegas_feature('vegas_spread', 'BOS', 'LAL', 2025, 1, 15, 'home')
+        results = computer.compute_matchup_features(
+            ['vegas_spread|none|raw|home', 'vegas_spread|none|raw|away'],
+            'BOS', 'LAL', '2024-2025', game_date
+        )
+        home_spread = results.get('vegas_spread|none|raw|home', 0.0)
         assert home_spread == -4.5, f"Expected home_spread=-4.5, got {home_spread}"
 
-        away_spread = handler._get_vegas_feature('vegas_spread', 'BOS', 'LAL', 2025, 1, 15, 'away')
+        away_spread = results.get('vegas_spread|none|raw|away', 0.0)
         assert away_spread == 4.5, f"Expected away_spread=4.5, got {away_spread}"
 
         # Test vegas_ou
-        ou = handler._get_vegas_feature('vegas_ou', 'BOS', 'LAL', 2025, 1, 15, 'none')
+        results = computer.compute_matchup_features(
+            ['vegas_ou|none|raw|none'],
+            'BOS', 'LAL', '2024-2025', game_date
+        )
+        ou = results.get('vegas_ou|none|raw|none', 0.0)
         assert ou == 219.5, f"Expected OU=219.5, got {ou}"
 
-    def test_stat_handler_falls_back_to_pregame_lines(self):
+    def test_computer_falls_back_to_pregame_lines(self):
         """Verify fallback to pregame_lines when vegas field is missing."""
-        from bball.stats.handler import StatHandlerV2
+        from bball.features.compute import BasketballFeatureComputer
 
-        handler = StatHandlerV2(statistics=[], db=None, league=None)
-        handler.games_home = {
+        games_home = {
             '2024-2025': {
                 '2025-01-15': {
                     'BOS': {
@@ -106,27 +119,42 @@ class TestVegasPredictionFlow:
                 }
             }
         }
+        computer = BasketballFeatureComputer(db=None)
+        computer.set_preloaded_data(games_home, {})
+
+        game_date = '2025-01-15'
 
         # Test fallback to pregame_lines
-        home_ml = handler._get_vegas_feature('vegas_ML', 'BOS', 'LAL', 2025, 1, 15, 'home')
+        results = computer.compute_matchup_features(
+            ['vegas_ML|none|raw|home'],
+            'BOS', 'LAL', '2024-2025', game_date
+        )
+        home_ml = results.get('vegas_ML|none|raw|home', 0.0)
         assert home_ml == -140.0, f"Expected home_ml=-140 from pregame_lines, got {home_ml}"
 
-        home_spread = handler._get_vegas_feature('vegas_spread', 'BOS', 'LAL', 2025, 1, 15, 'home')
+        results = computer.compute_matchup_features(
+            ['vegas_spread|none|raw|home', 'vegas_spread|none|raw|away'],
+            'BOS', 'LAL', '2024-2025', game_date
+        )
+        home_spread = results.get('vegas_spread|none|raw|home', 0.0)
         assert home_spread == -3.5, f"Expected spread=-3.5 from pregame_lines, got {home_spread}"
 
         # Away spread should be negated from pregame_lines.spread
-        away_spread = handler._get_vegas_feature('vegas_spread', 'BOS', 'LAL', 2025, 1, 15, 'away')
+        away_spread = results.get('vegas_spread|none|raw|away', 0.0)
         assert away_spread == 3.5, f"Expected away_spread=3.5 (negated), got {away_spread}"
 
-        ou = handler._get_vegas_feature('vegas_ou', 'BOS', 'LAL', 2025, 1, 15, 'none')
+        results = computer.compute_matchup_features(
+            ['vegas_ou|none|raw|none'],
+            'BOS', 'LAL', '2024-2025', game_date
+        )
+        ou = results.get('vegas_ou|none|raw|none', 0.0)
         assert ou == 215.0, f"Expected over_under=215.0 from pregame_lines, got {ou}"
 
     def test_vegas_implied_prob_calculation(self):
         """Verify vegas_implied_prob formula: if ML<0: -ML/(-ML+100), else: 100/(ML+100)."""
-        from bball.stats.handler import StatHandlerV2
+        from bball.features.compute import BasketballFeatureComputer
 
-        handler = StatHandlerV2(statistics=[], db=None, league=None)
-        handler.games_home = {
+        games_home = {
             '2024-2025': {
                 '2025-01-15': {
                     'BOS': {
@@ -134,27 +162,35 @@ class TestVegasPredictionFlow:
                         'awayTeam': {'name': 'LAL'},
                         'vegas': {
                             'home_ML': -150,  # Favorite: (-(-150)) / (-(-150) + 100) = 150/250 = 0.6
-                            'away_ML': 130,   # Underdog: 100 / (130 + 100) = 100/230 ≈ 0.4348
+                            'away_ML': 130,   # Underdog: 100 / (130 + 100) = 100/230 ~ 0.4348
                         }
                     }
                 }
             }
         }
+        computer = BasketballFeatureComputer(db=None)
+        computer.set_preloaded_data(games_home, {})
 
-        home_prob = handler._get_vegas_feature('vegas_implied_prob', 'BOS', 'LAL', 2025, 1, 15, 'home')
+        game_date = '2025-01-15'
+
+        results = computer.compute_matchup_features(
+            ['vegas_implied_prob|none|raw|home', 'vegas_implied_prob|none|raw|away'],
+            'BOS', 'LAL', '2024-2025', game_date
+        )
+
+        home_prob = results.get('vegas_implied_prob|none|raw|home', 0.0)
         expected_home = 150 / 250  # 0.6
         assert abs(home_prob - expected_home) < 0.001, f"Expected home_prob={expected_home}, got {home_prob}"
 
-        away_prob = handler._get_vegas_feature('vegas_implied_prob', 'BOS', 'LAL', 2025, 1, 15, 'away')
-        expected_away = 100 / 230  # ≈ 0.4348
-        assert abs(away_prob - expected_away) < 0.001, f"Expected away_prob≈{expected_away}, got {away_prob}"
+        away_prob = results.get('vegas_implied_prob|none|raw|away', 0.0)
+        expected_away = 100 / 230  # ~ 0.4348
+        assert abs(away_prob - expected_away) < 0.001, f"Expected away_prob~{expected_away}, got {away_prob}"
 
     def test_missing_vegas_returns_zero(self):
         """Verify that missing vegas data returns 0.0 gracefully."""
-        from bball.stats.handler import StatHandlerV2
+        from bball.features.compute import BasketballFeatureComputer
 
-        handler = StatHandlerV2(statistics=[], db=None, league=None)
-        handler.games_home = {
+        games_home = {
             '2024-2025': {
                 '2025-01-15': {
                     'BOS': {
@@ -165,9 +201,17 @@ class TestVegasPredictionFlow:
                 }
             }
         }
+        computer = BasketballFeatureComputer(db=None)
+        computer.set_preloaded_data(games_home, {})
+
+        game_date = '2025-01-15'
 
         # Should return 0.0 when no vegas data available
-        result = handler._get_vegas_feature('vegas_ML', 'BOS', 'LAL', 2025, 1, 15, 'home')
+        results = computer.compute_matchup_features(
+            ['vegas_ML|none|raw|home'],
+            'BOS', 'LAL', '2024-2025', game_date
+        )
+        result = results.get('vegas_ML|none|raw|home', 0.0)
         assert result == 0.0, f"Expected 0.0 for missing vegas data, got {result}"
 
 

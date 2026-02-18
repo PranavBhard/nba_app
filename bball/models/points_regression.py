@@ -40,7 +40,8 @@ except ImportError:
     SHAP_AVAILABLE = False
 
 from bball.mongo import Mongo
-from bball.stats.handler import StatHandlerV2
+from bball.features.compute import BasketballFeatureComputer
+from bball.features.injury import InjuryFeatureCalculator
 from bball.stats.per_calculator import PERCalculator
 from bball.utils.collection import import_collection
 from bball.features.parser import parse_feature_name
@@ -176,7 +177,8 @@ class PointsRegressionTrainer:
         self._top_ppg_cache = {}  # dict[(team, season, date_str)] -> float
         
         # Initialize components
-        self.stat_handler = None
+        self._computer = None
+        self._injury_calculator = None
         self.per_calculator = None
         self.scaler = None
         self.model = None
@@ -243,29 +245,22 @@ class PointsRegressionTrainer:
         - home_3PA_rate, away_3PA_rate (for interaction features)
         - home_3P_pct_allowed, away_3P_pct_allowed (opponent 3P% defense)
         """
-        if self.stat_handler is None:
-            self.stat_handler = StatHandlerV2(
-                statistics=[],
-                include_absolute=True,
-                use_exponential_weighting=True,
-                db=self.db
-            )
-        
+        if self._computer is None:
+            self._computer = BasketballFeatureComputer(db=self.db, recency_alpha=0.1)
+
         home_team = game['homeTeam']['name']
         away_team = game['awayTeam']['name']
         season = game.get('season', '2024-2025')
         year = game.get('year', 2024)
         month = game.get('month', 1)
         day = game.get('day', 1)
-        
-        # Get stat averages using getStatAvgDiffs
-        # Note: getStatAvgDiffs returns a dict, but we need to parse it properly
-        # For now, we'll get games and compute stats manually
-        home_games = self.stat_handler.get_team_games_before_date(home_team, year, month, day, season)
-        away_games = self.stat_handler.get_team_games_before_date(away_team, year, month, day, season)
-        
+
+        game_date_str = f"{year}-{month:02d}-{day:02d}"
+        home_games = self._computer._get_team_season_games(home_team, season, game_date_str)
+        away_games = self._computer._get_team_season_games(away_team, season, game_date_str)
+
         features = {}
-        
+
         # Helper function to compute team stats from games
         def compute_team_stats(games, team_name, is_home=True):
             if not games:
@@ -481,23 +476,19 @@ class PointsRegressionTrainer:
         month = game.get('month', 1)
         day = game.get('day', 1)
         
-        if self.stat_handler is None:
-            self.stat_handler = StatHandlerV2(
-                statistics=[],
-                include_absolute=True,
-                use_exponential_weighting=True,
-                db=self.db
-            )
-        
+        if self._computer is None:
+            self._computer = BasketballFeatureComputer(db=self.db, recency_alpha=0.1)
+
         # Home court advantage (1 for home team)
         features['homeCourt'] = 1
-        
+
         # Get rest days from game history
         target_date = date(year, month, day)
-        
+
         # Get last game for each team
-        home_games = self.stat_handler.get_team_games_before_date(home_team, year, month, day, season)
-        away_games = self.stat_handler.get_team_games_before_date(away_team, year, month, day, season)
+        game_date_str = f"{year}-{month:02d}-{day:02d}"
+        home_games = self._computer._get_team_season_games(home_team, season, game_date_str)
+        away_games = self._computer._get_team_season_games(away_team, season, game_date_str)
         
         # Find most recent game date for each team
         def get_last_game_date(games, team_name):
@@ -776,15 +767,11 @@ class PointsRegressionTrainer:
             season = game.get('season', '2024-2025')
             
             # Get team's games before this date (now includes venue_guid from import_collection)
-            if self.stat_handler is None:
-                self.stat_handler = StatHandlerV2(
-                    statistics=[],
-                    include_absolute=True,
-                    use_exponential_weighting=True,
-                    db=self.db
-                )
-            
-            away_games = self.stat_handler.get_team_games_before_date(away_team, year, month, day, season)
+            if self._computer is None:
+                self._computer = BasketballFeatureComputer(db=self.db, recency_alpha=0.1)
+
+            game_date_str = f"{year}-{month:02d}-{day:02d}"
+            away_games = self._computer._get_team_season_games(away_team, season, game_date_str)
             
             # Find most recent game with a venue_guid (where the game was completed)
             last_venue_guid = None
@@ -837,9 +824,6 @@ class PointsRegressionTrainer:
         Returns:
             Dict with injury feature values
         """
-        if not self.stat_handler:
-            return {}
-        
         try:
             home_team = game['homeTeam']['name']
             away_team = game['awayTeam']['name']
@@ -847,9 +831,15 @@ class PointsRegressionTrainer:
             year = game.get('year', 2024)
             month = game.get('month', 1)
             day = game.get('day', 1)
-            
-            # Get injury features from StatHandlerV2
-            injury_features = self.stat_handler.get_injury_features(
+
+            if self._injury_calculator is None:
+                self._injury_calculator = InjuryFeatureCalculator(db=self.db)
+                if self._computer and self._computer.games_home is not None:
+                    self._injury_calculator.set_preloaded_data(
+                        self._computer.games_home, self._computer.games_away,
+                    )
+
+            injury_features = self._injury_calculator.get_injury_features(
                 HOME=home_team,
                 AWAY=away_team,
                 season=season,
@@ -860,7 +850,7 @@ class PointsRegressionTrainer:
                 per_calculator=self.per_calculator,
                 recency_decay_k=self.recency_decay_k
             )
-            
+
             return injury_features
         except Exception as e:
             logger.warning(f"Error calculating injury features: {e}")
@@ -917,103 +907,100 @@ class PointsRegressionTrainer:
     def _build_feature_vector_internal(self, game: dict, before_date: str, selected_features: List[str] = None) -> Tuple[np.ndarray, List[str]]:
         """
         Build feature vector from pipe-delimited feature names (e.g., 'off_rtg|season|avg|home').
-        Uses StatHandlerV2.calculate_feature() for each feature.
+        Uses BasketballFeatureComputer.compute_matchup_features() for regular features.
         """
-        # Initialize StatHandlerV2 if needed
-        if self.stat_handler is None:
-            self.stat_handler = StatHandlerV2(
-                statistics=[],
-                include_absolute=True,
-                use_exponential_weighting=True,
-                db=self.db,
-                lazy_load=True  # Don't load all games for single predictions
-            )
-            # Preload venue cache for travel feature calculations (lightweight)
+        # Initialize BasketballFeatureComputer if needed
+        if self._computer is None:
+            self._computer = BasketballFeatureComputer(db=self.db, recency_alpha=0.1)
             try:
-                self.stat_handler.preload_venue_cache()
+                self._computer.preload_venue_cache()
             except Exception:
                 pass
 
         # Initialize PER calculator if needed (for PER features)
         if self.per_calculator is None:
-            # Only initialize if PER features are needed
             if selected_features and any(f.startswith('player_') or 'per' in f.lower() for f in selected_features):
-                self.per_calculator = PERCalculator(db=self.db, preload=False)  # Don't preload for single prediction
-        
+                self.per_calculator = PERCalculator(db=self.db, preload=False)
+
         home_team = game.get('homeTeam', {}).get('name')
         away_team = game.get('awayTeam', {}).get('name')
         season = game.get('season', '2024-2025')
         year = game.get('year', 2024)
         month = game.get('month', 1)
         day = game.get('day', 1)
-        
+
         if not home_team or not away_team:
             raise ValueError(f"Game missing home_team or away_team: {game}")
-        
-        # Build features dict by calculating each feature directly
+
         all_features = {}
-        
+
         if selected_features is None:
             raise ValueError("selected_features must be provided")
-        
-        # Calculate each selected feature
+
+        game_date_str = f"{year}-{month:02d}-{day:02d}"
+
+        # Categorize features
+        regular_features = []
+        injury_features_list = []
         for feature_name in selected_features:
-            try:
-                # Handle pred_* features - these are not available at prediction time (circular dependency)
-                if feature_name.startswith('pred_'):
-                    all_features[feature_name] = 0.0
-                    logger.debug(f"Point prediction feature {feature_name} not available during points prediction, setting to 0.0")
-                    continue
-                
-                # Parse feature name to check format
-                components = parse_feature_name(feature_name)
-                
-                # Handle injury features - use get_injury_features for better performance
-                if components and components.stat_name.startswith('inj_'):
-                    try:
-                        game_doc = game if isinstance(game, dict) else None
-                        injury_features = self.stat_handler.get_injury_features(
-                            home_team, away_team, season, year, month, day,
-                            game_doc=game_doc,
-                            per_calculator=self.per_calculator,
-                            recency_decay_k=self.recency_decay_k
-                        )
-                        if injury_features and feature_name in injury_features:
-                            all_features[feature_name] = injury_features[feature_name]
-                        else:
-                            all_features[feature_name] = 0.0
-                    except Exception as e:
-                        logger.warning(f"Error calculating injury feature {feature_name}: {e}")
-                        all_features[feature_name] = 0.0
-                    continue
-                
-                # Handle PER features - points model typically doesn't use these, but handle gracefully
-                if components and (components.stat_name.startswith('player_') or components.stat_name == 'per_available'):
-                    # PER features require player filters - not available at prediction time for points model
-                    # Set to 0 (points model shouldn't use PER features, but handle gracefully)
-                    all_features[feature_name] = 0.0
-                    logger.debug(f"PER feature {feature_name} not supported in points prediction without player filters, setting to 0.0")
-                    continue
-                
-                # All other features (regular stats, enhanced features, special features like elo/rest)
-                # Use calculate_feature which handles all cases automatically
-                try:
-                    value = self.stat_handler.calculate_feature(
-                        feature_name, home_team, away_team, season, year, month, day, self.per_calculator
-                    )
-                    all_features[feature_name] = value if value is not None and not (isinstance(value, float) and (np.isnan(value) or np.isinf(value))) else 0.0
-                except Exception as e:
-                    logger.warning(f"Error calculating feature {feature_name}: {e}")
-                    all_features[feature_name] = 0.0
-                    
-            except Exception as e:
-                logger.warning(f"Error processing feature {feature_name}: {e}")
+            if feature_name.startswith('pred_'):
                 all_features[feature_name] = 0.0
-        
+            elif feature_name.startswith('inj_'):
+                injury_features_list.append(feature_name)
+            elif feature_name.startswith('player_') or feature_name.startswith('per_available'):
+                all_features[feature_name] = 0.0
+            elif '|' in feature_name:
+                regular_features.append(feature_name)
+            else:
+                all_features[feature_name] = 0.0
+
+        # Batch compute regular features
+        if regular_features:
+            try:
+                regular_results = self._computer.compute_matchup_features(
+                    regular_features, home_team, away_team, season,
+                    game_date_str,
+                )
+                for fname, val in regular_results.items():
+                    if val is not None and not (isinstance(val, float) and (np.isnan(val) or np.isinf(val))):
+                        all_features[fname] = val
+                    else:
+                        all_features[fname] = 0.0
+            except Exception as e:
+                logger.warning(f"Error computing regular features: {e}")
+                for fname in regular_features:
+                    all_features[fname] = 0.0
+
+        # Compute injury features
+        if injury_features_list:
+            try:
+                if self._injury_calculator is None:
+                    self._injury_calculator = InjuryFeatureCalculator(db=self.db)
+                    if self._computer.games_home is not None:
+                        self._injury_calculator.set_preloaded_data(
+                            self._computer.games_home, self._computer.games_away,
+                        )
+                game_doc = game if isinstance(game, dict) else None
+                injury_results = self._injury_calculator.get_injury_features(
+                    home_team, away_team, season, year, month, day,
+                    game_doc=game_doc,
+                    per_calculator=self.per_calculator,
+                    recency_decay_k=self.recency_decay_k,
+                )
+                for fname in injury_features_list:
+                    if injury_results and fname in injury_results:
+                        all_features[fname] = injury_results[fname]
+                    else:
+                        all_features[fname] = 0.0
+            except Exception as e:
+                logger.warning(f"Error calculating injury features: {e}")
+                for fname in injury_features_list:
+                    all_features[fname] = 0.0
+
         # Build feature vector in the order specified by selected_features (preserve order)
         feature_vector = np.array([all_features.get(name, 0.0) for name in selected_features])
         feature_names = selected_features.copy()
-        
+
         return feature_vector, feature_names
     
     def create_training_data(self, query: dict = None, selected_features: List[str] = None, progress_callback: callable = None, limit: int = None) -> pd.DataFrame:
@@ -1060,9 +1047,11 @@ class PointsRegressionTrainer:
             # If no selection, include all features including injuries
             needs_injury_features = True
         
-        if needs_injury_features and self.stat_handler:
+        if needs_injury_features:
             print("  Preloading injury feature cache...")
-            self.stat_handler.preload_injury_cache(games)
+            if self._injury_calculator is None:
+                self._injury_calculator = InjuryFeatureCalculator(db=self.db)
+            self._injury_calculator.preload_injury_cache(games)
             print("    Injury cache preloaded")
         
         X_list = []

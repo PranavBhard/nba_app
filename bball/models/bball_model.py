@@ -38,7 +38,7 @@ from sklearn.feature_selection import SelectKBest, f_classif
 from sklearn.calibration import CalibratedClassifierCV
 
 from bball.mongo import Mongo
-from bball.stats.handler import StatHandlerV2
+from bball.features.compute import BasketballFeatureComputer
 from bball.utils.collection import import_collection
 from bball.data import GamesRepository, PlayerStatsRepository, RostersRepository, PointsConfigRepository
 from bball.league_config import LeagueConfig, load_league_config
@@ -222,38 +222,26 @@ class BballModel:
             else:
                 print("Warning: Era normalization requires preloaded data, but preload_data=False")
         
-        # Initialize stat handler with enhanced options
-        print("Initializing stat handlers...")
-        self.stat_handler = StatHandlerV2(
-            statistics=[],  # calculate_feature() parses feature names directly
-            use_exponential_weighting=use_exponential_weighting,
-            exponential_lambda=exponential_lambda,
-            preloaded_games=all_games,  # None if not preloading
-            league_averages=self.league_averages,
-            db=self.db,
-            lazy_load=(not preload_data and all_games is None),  # Enable lazy loading for predictions
-            league=self.league  # Pass league for correct collection access
-        )
+        # Initialize BasketballFeatureComputer for regular features
+        print("Initializing feature computers...")
+        _alpha = exponential_lambda if use_exponential_weighting else 0.0
+        self._computer = BasketballFeatureComputer(db=self.db, league=self.league, recency_alpha=_alpha)
+        if all_games:
+            games_home, games_away = all_games
+            self._computer.set_preloaded_data(games_home, games_away)
         # Preload venue cache for travel feature calculations (lightweight, always do it)
         try:
-            self.stat_handler.preload_venue_cache()
+            self._computer.preload_venue_cache()
         except Exception:
             pass
 
         if points_features:
-            # StatHandlerV2 doesn't need statistics anymore (we use calculate_feature() directly)
-            self.points_stat_handler = StatHandlerV2(
-                statistics=[],  # Not used in new architecture
-                use_exponential_weighting=use_exponential_weighting,
-                exponential_lambda=exponential_lambda,
-                preloaded_games=all_games,  # None if not preloading
-                league_averages=self.league_averages,
-                db=self.db,
-                lazy_load=(not preload_data and all_games is None),  # Enable lazy loading for predictions
-                league=self.league  # Pass league for correct collection access
-            )
+            self._points_computer = BasketballFeatureComputer(db=self.db, league=self.league, recency_alpha=_alpha)
+            if all_games:
+                games_home, games_away = all_games
+                self._points_computer.set_preloaded_data(games_home, games_away)
         else:
-            self.points_stat_handler = None
+            self._points_computer = None
         
         # Initialize PER calculator if enabled
         self.per_calculator = None
@@ -297,7 +285,7 @@ class BballModel:
         Inject preloaded prediction context to avoid per-feature DB calls.
 
         This method injects preloaded game data, player stats, and venue cache
-        into the stat_handler and per_calculator, enabling in-memory feature
+        into the feature computer and per_calculator, enabling in-memory feature
         calculations instead of per-feature database queries.
 
         Args:
@@ -310,32 +298,19 @@ class BballModel:
         if context is None:
             return
 
-        # Inject into stat_handler (for regular stat features)
-        if hasattr(self, 'stat_handler') and self.stat_handler:
-            self.stat_handler.games_home = context.games_home
-            self.stat_handler.games_away = context.games_away
-            self.stat_handler.all_games = (context.games_home, context.games_away)
-            # Inject venue cache
-            if context.venue_cache:
-                self.stat_handler._venue_cache.update(context.venue_cache)
-            # Inject injury preloaded players cache
-            if context.player_stats:
-                player_stats = dict(context.player_stats)
-                self.stat_handler._injury_preloaded_players = player_stats
-                self.stat_handler._injury_cache_loaded = True
+        # Inject into _computer (for regular stat features)
+        if hasattr(self, '_computer') and self._computer:
+            self._computer.set_preloaded_data(
+                context.games_home, context.games_away,
+                venue_cache=context.venue_cache,
+            )
 
-        # Inject into points_stat_handler if it exists
-        if hasattr(self, 'points_stat_handler') and self.points_stat_handler:
-            self.points_stat_handler.games_home = context.games_home
-            self.points_stat_handler.games_away = context.games_away
-            self.points_stat_handler.all_games = (context.games_home, context.games_away)
-            if context.venue_cache:
-                self.points_stat_handler._venue_cache.update(context.venue_cache)
-            # Inject injury preloaded players cache
-            if context.player_stats:
-                player_stats = dict(context.player_stats)
-                self.points_stat_handler._injury_preloaded_players = player_stats
-                self.points_stat_handler._injury_cache_loaded = True
+        # Inject into _points_computer if it exists
+        if hasattr(self, '_points_computer') and self._points_computer:
+            self._points_computer.set_preloaded_data(
+                context.games_home, context.games_away,
+                venue_cache=context.venue_cache,
+            )
 
         # Inject into per_calculator (for PER/injury features)
         if hasattr(self, 'per_calculator') and self.per_calculator:
@@ -905,27 +880,30 @@ class BballModel:
         # Preload venue cache to avoid per-game DB queries
         print("  [1/4] Venue locations...", end=" ", flush=True)
         t0 = _time.time()
-        self.stat_handler.preload_venue_cache()
-        if self.points_stat_handler:
-            self.points_stat_handler.preload_venue_cache()
-        print(f"✓ {len(self.stat_handler._venue_cache):,} venues ({_time.time()-t0:.1f}s)")
+        self._computer.preload_venue_cache()
+        if self._points_computer:
+            self._points_computer.preload_venue_cache()
+        print(f"✓ {len(self._computer._venue_cache):,} venues ({_time.time()-t0:.1f}s)")
 
         # Preload injury cache if injury features are enabled
         if self.include_injuries:
             print("  [2/4] Injury feature cache...", end=" ", flush=True)
             t0 = _time.time()
-            self.stat_handler.preload_injury_cache(games)
-            num_teams = len(getattr(self.stat_handler, '_injury_preloaded_players', {}))
+            if not hasattr(self, '_injury_calculator'):
+                from bball.features.injury import InjuryFeatureCalculator
+                self._injury_calculator = InjuryFeatureCalculator(
+                    db=self.db, league=self.league, batch_training_mode=True,
+                )
+                if self.all_games:
+                    gh, ga = self.all_games
+                    self._injury_calculator.set_preloaded_data(gh, ga)
+            self._injury_calculator.preload_injury_cache(games)
+            num_teams = len(getattr(self._injury_calculator, '_injury_preloaded_players', {}))
             print(f"✓ {num_teams:,} team-seasons ({_time.time()-t0:.1f}s)")
         else:
             print("  [2/4] Injury features... SKIPPED (disabled)")
 
-        # CRITICAL: Set batch training mode to skip per-game roster/name lookups
-        # This flag tells stat_handler methods to use preloaded caches and skip DB queries
-        self.stat_handler._batch_training_mode = True
-        if self.points_stat_handler:
-            self.points_stat_handler._batch_training_mode = True
-        print(f"  [*] Batch training mode: ENABLED (skips roster/name DB queries)")
+        print(f"  [*] Batch training mode: ENABLED")
 
         # Preload PER player cache to avoid per-game DB queries
         if self.include_per_features and self.per_calculator:
@@ -1001,8 +979,9 @@ class BballModel:
         print(f"\n{'='*70}")
         print(f"  CACHE STATUS (should all be TRUE for fast processing)")
         print(f"{'='*70}")
-        print(f"  stat_handler._batch_training_mode:   {getattr(self.stat_handler, '_batch_training_mode', False)}")
-        print(f"  stat_handler._injury_cache_loaded:   {getattr(self.stat_handler, '_injury_cache_loaded', False)}")
+        print(f"  _computer preloaded:                 {self._computer.games_home is not None}")
+        if hasattr(self, '_injury_calculator'):
+            print(f"  _injury_calculator cache_loaded:     {getattr(self._injury_calculator, '_injury_cache_loaded', False)}")
         if self.per_calculator:
             print(f"  per_calculator._preloaded:           {getattr(self.per_calculator, '_preloaded', False)}")
             per_cache_size = len(getattr(self.per_calculator, '_player_stats_cache', {}) or {})
@@ -2180,8 +2159,8 @@ class BballModel:
             
             # Predict points if model available
             home_pts, away_pts = None, None
-            if self.points_model and self.points_stat_handler:
-                pts_data = self.points_stat_handler.getStatAvgDiffs(
+            if self.points_model and self._points_computer:
+                pts_data = self._points_computer.getStatAvgDiffs(
                     home_team, away_team, season,
                     year=year, month=month, day=day,
                     point_regression=True
@@ -2548,17 +2527,13 @@ class BballModel:
             logging.info(f"[DEBUG] First 10 feature_names: {self.feature_names[:10]}")
             self._debug_features_logged = True
         
-        # Calculate each feature directly
-        calculated_count = 0
-        skipped_count_feat = 0
-        zero_count = 0
-        error_count = 0
-        parse_failed_count = 0
-        for idx, feature_name in enumerate(self.feature_names):
-            # Handle special non-pipe features (metadata, computed values from other models)
+        # Categorize features
+        regular_features = []
+        game_date_str = f"{year}-{month:02d}-{day:02d}"
+        for feature_name in self.feature_names:
             if '|' not in feature_name:
+                # Special non-pipe features (metadata, computed values)
                 if feature_name == 'SeasonStartYear':
-                    # Oct-Dec belong to that calendar year's season; Jan-Jun belong to previous year.
                     features_dict[feature_name] = int(year) if int(month) >= 10 else int(year) - 1
                 elif feature_name == 'Year':
                     features_dict[feature_name] = int(year)
@@ -2567,62 +2542,23 @@ class BballModel:
                 elif feature_name == 'Day':
                     features_dict[feature_name] = int(day)
                 elif feature_name == 'pred_margin':
-                    # pred_margin is populated via additional_features from points model
-                    # Set to 0.0 here; will be overwritten by additional_features if available
                     features_dict[feature_name] = 0.0
                 else:
-                    # Unknown non-pipe feature: safe default
                     features_dict[feature_name] = 0.0
-                calculated_count += 1
-                continue
-
-            components = parse_feature_name(feature_name)
-            
-            # All features follow standard pattern now - no special handling needed
-            if not components:
-                # Not a standard pipe-delimited feature (or malformed) — still attempt calculation.
-                # StatHandlerV2.calculate_feature() will route these through its special-feature logic
-                # (e.g., Elo/rest) and return 0.0 if unsupported.
-                try:
-                    value = self.stat_handler.calculate_feature(
-                        feature_name, home_team, away_team, season, year, month, day, self.per_calculator, target_venue_guid
-                    )
-                except Exception:
-                    value = 0.0
-                    error_count += 1
-                features_dict[feature_name] = value
-                calculated_count += 1
-                if value == 0.0 or value is None:
-                    zero_count += 1
-                parse_failed_count += 1
-                continue
-            elif feature_name.startswith('player_'):
-                # PER features - handled separately
-                skipped_count_feat += 1
-                continue
+            elif feature_name.startswith('player_') or feature_name.startswith('per_available'):
+                pass  # PER features - handled separately below
             elif feature_name.startswith('inj_'):
-                # Injury features - handled separately if enabled
-                skipped_count_feat += 1
-                continue
+                pass  # Injury features - handled separately below
             else:
-                # Regular stat feature - calculate directly
-                value = self.stat_handler.calculate_feature(
-                    feature_name, home_team, away_team, season, year, month, day, self.per_calculator, target_venue_guid
-                )
-                features_dict[feature_name] = value
-                calculated_count += 1
-                if value == 0.0 or value is None:
-                    zero_count += 1
-        if not hasattr(self, '_debug_features_summary_logged'):
-            import logging
-            logging.info(f"[DEBUG] _build_features_dict summary after main loop: "
-                        f"Calculated {calculated_count}/{len(self.feature_names)} features, "
-                        f"{zero_count} were 0.0/None, {skipped_count_feat} skipped (PER/injury deferred), "
-                        f"{error_count} errors, {parse_failed_count} non-standard/parse-failed (computed via special handler)")
-            logging.info(f"[DEBUG] features_dict has {len(features_dict)} keys after main loop")
-            self._debug_features_summary_logged = True
-        
-        # All features should be included in feature_names now - no special handling needed
+                regular_features.append(feature_name)
+
+        # Batch compute regular features via BasketballFeatureComputer
+        if regular_features:
+            regular_results = self._computer.compute_matchup_features(
+                regular_features, home_team, away_team, season,
+                game_date_str, venue_guid=target_venue_guid,
+            )
+            features_dict.update(regular_results)
         
         # Add PER features - calculate if ANY PER features are in feature_names (regardless of include_per_features flag)
         # The flag should only control training, not prediction-time calculation
@@ -2717,11 +2653,18 @@ class BballModel:
                 except:
                     pass
 
-            injury_features = self.stat_handler.get_injury_features(
+            if not hasattr(self, '_injury_calculator'):
+                from bball.features.injury import InjuryFeatureCalculator
+                self._injury_calculator = InjuryFeatureCalculator(db=self.db, league=self.league)
+                if self._computer.games_home is not None:
+                    self._injury_calculator.set_preloaded_data(
+                        self._computer.games_home, self._computer.games_away,
+                    )
+            injury_features = self._injury_calculator.get_injury_features(
                 home_team, away_team, season, year, month, day,
                 game_doc=injury_game_doc,
                 per_calculator=self.per_calculator,
-                recency_decay_k=getattr(self, 'recency_decay_k', 15.0)  # Use default if not set
+                recency_decay_k=getattr(self, 'recency_decay_k', 15.0),
             )
             if injury_features:
                 # Copy all injury features that are in feature_names
@@ -2865,8 +2808,8 @@ class BballModel:
         
         # Predict points if model available
         home_pts, away_pts = None, None
-        if self.points_model and self.points_stat_handler:
-            pts_data = self.points_stat_handler.getStatAvgDiffs(
+        if self.points_model and self._points_computer:
+            pts_data = self._points_computer.getStatAvgDiffs(
                 home_team, away_team, season,
                 year=year, month=month, day=day,
                 point_regression=True

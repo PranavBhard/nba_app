@@ -8,7 +8,7 @@ from the same game (e.g., ensemble base models).
 Key benefits:
 - Single BasketballFeatureComputer for regular stat features
 - Single PER calculator instance
-- StatHandlerV2 retained only for injury feature computation
+- InjuryFeatureCalculator for injury feature computation
 - Generates superset of features needed by all models
 - Each model extracts its subset from the shared feature dict
 
@@ -18,9 +18,9 @@ Uses data layer repositories for all database operations.
 from typing import Dict, List, Optional, Set
 from datetime import datetime
 
-from bball.stats.handler import StatHandlerV2
 from bball.stats.per_calculator import PERCalculator
 from bball.features.compute import BasketballFeatureComputer
+from bball.features.injury import InjuryFeatureCalculator
 from bball.features.parser import parse_feature_name
 from bball.data import GamesRepository, RostersRepository
 
@@ -78,15 +78,8 @@ class SharedFeatureGenerator:
             except Exception:
                 pass
 
-        # StatHandlerV2 retained only for injury features (get_injury_features)
-        self.stat_handler = StatHandlerV2(
-            statistics=[],
-            use_exponential_weighting=False,
-            preloaded_games=None,
-            db=db,
-            lazy_load=True,
-            league=league
-        )
+        # InjuryFeatureCalculator for injury features
+        self._injury_calculator = InjuryFeatureCalculator(db=db, league=league)
 
         # Create shared PER calculator (no preload - queries on demand)
         self.per_calculator = PERCalculator(db, preload=False, league=league)
@@ -122,21 +115,15 @@ class SharedFeatureGenerator:
             venue_cache=context.venue_cache,
         )
 
-        # Inject into stat_handler (still needed for injury features)
-        if self.stat_handler:
-            self.stat_handler.games_home = context.games_home
-            self.stat_handler.games_away = context.games_away
-            self.stat_handler.all_games = (context.games_home, context.games_away)
-            # Rebuild team index for fast bisect-based lookups
-            self.stat_handler._build_team_index()
-            if context.venue_cache:
-                self.stat_handler._venue_cache.update(context.venue_cache)
+        # Inject into InjuryFeatureCalculator
+        if self._injury_calculator:
+            self._injury_calculator.set_preloaded_data(context.games_home, context.games_away)
             # Inject injury preloaded players cache
             if context.player_stats:
                 player_stats = dict(context.player_stats) if hasattr(context.player_stats, 'items') else context.player_stats
-                self.stat_handler._injury_preloaded_players = player_stats
-                self.stat_handler._injury_cache_loaded = True
-                print(f"[SharedFeatureGenerator] Set stat_handler._injury_cache_loaded=True, {len(player_stats)} keys")
+                self._injury_calculator._injury_preloaded_players = player_stats
+                self._injury_calculator._injury_cache_loaded = True
+                print(f"[SharedFeatureGenerator] Set _injury_calculator._injury_cache_loaded=True, {len(player_stats)} keys")
 
         # Inject into per_calculator
         if self.per_calculator:
@@ -432,7 +419,7 @@ class SharedFeatureGenerator:
             except Exception:
                 pass
 
-            injury_features = self.stat_handler.get_injury_features(
+            injury_features = self._injury_calculator.get_injury_features(
                 home_team, away_team, season, year, month, day,
                 game_doc=game_doc,
                 per_calculator=self.per_calculator,

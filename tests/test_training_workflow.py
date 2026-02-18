@@ -90,37 +90,40 @@ def test_nba_model_initialization():
 
 
 def test_feature_calculation():
-    """Test that feature calculation works via StatHandler."""
+    """Test that feature calculation works via BasketballFeatureComputer."""
     print("\n" + "=" * 60)
     print("TEST: Feature Calculation")
     print("=" * 60)
 
     from bball.mongo import Mongo
-    from bball.stats.handler import StatHandlerV2
+    from bball.features.compute import BasketballFeatureComputer
 
     results = []
     db = Mongo().db
 
-    # Test 1: StatHandler initialization
-    print("\n  1. Testing StatHandler initialization...")
+    # Test 1: BasketballFeatureComputer initialization
+    print("\n  1. Testing BasketballFeatureComputer initialization...")
     try:
-        sh = StatHandlerV2(db=db, statistics=[])
-        is_valid = sh is not None
+        computer = BasketballFeatureComputer(db=db)
+        is_valid = computer is not None
         status = "PASS" if is_valid else "FAIL"
-        print(f"     {status}: StatHandler initialized")
-        results.append(('stat_handler_init', is_valid))
+        print(f"     {status}: BasketballFeatureComputer initialized")
+        results.append(('feature_computer_init', is_valid))
     except Exception as e:
-        print(f"     FAIL: StatHandler initialization failed: {e}")
-        results.append(('stat_handler_init', False))
+        print(f"     FAIL: BasketballFeatureComputer initialization failed: {e}")
+        results.append(('feature_computer_init', False))
         return results
+
+    game_date = '2024-01-15'
 
     # Test 2: Calculate basic feature
     print("\n  2. Testing basic feature calculation...")
     try:
-        feature_value = sh.calculate_feature(
-            'wins|season|avg|diff',
-            'LAL', 'BOS', '2023-2024', 2024, 1, 15
+        feature_results = computer.compute_matchup_features(
+            ['wins|season|avg|diff'],
+            'LAL', 'BOS', '2023-2024', game_date
         )
+        feature_value = feature_results.get('wins|season|avg|diff', 0.0)
         is_valid = isinstance(feature_value, (int, float)) and not (feature_value != feature_value)  # not NaN
         status = "PASS" if is_valid else "FAIL"
         print(f"     {status}: wins|season|avg|diff = {feature_value:.4f}")
@@ -132,10 +135,11 @@ def test_feature_calculation():
     # Test 3: Calculate net feature
     print("\n  3. Testing net feature calculation...")
     try:
-        feature_value = sh.calculate_feature(
-            'points_net|season|avg|diff',
-            'LAL', 'BOS', '2023-2024', 2024, 1, 15
+        feature_results = computer.compute_matchup_features(
+            ['points_net|season|avg|diff'],
+            'LAL', 'BOS', '2023-2024', game_date
         )
+        feature_value = feature_results.get('points_net|season|avg|diff', 0.0)
         is_valid = isinstance(feature_value, (int, float))
         status = "PASS" if is_valid else "FAIL"
         print(f"     {status}: points_net|season|avg|diff = {feature_value:.4f}")
@@ -147,10 +151,11 @@ def test_feature_calculation():
     # Test 4: Calculate blend feature (composite time_period format)
     print("\n  4. Testing blend feature calculation...")
     try:
-        feature_value = sh.calculate_feature(
-            'wins|blend:season:0.80/games_12:0.20|avg|diff',
-            'LAL', 'BOS', '2023-2024', 2024, 1, 15
+        feature_results = computer.compute_matchup_features(
+            ['wins|blend:season:0.80/games_12:0.20|avg|diff'],
+            'LAL', 'BOS', '2023-2024', game_date
         )
+        feature_value = feature_results.get('wins|blend:season:0.80/games_12:0.20|avg|diff', 0.0)
         is_valid = isinstance(feature_value, (int, float))
         status = "PASS" if is_valid else "FAIL"
         print(f"     {status}: wins|blend:season:0.80/games_12:0.20|avg|diff = {feature_value:.4f}")

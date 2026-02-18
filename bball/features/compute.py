@@ -1,5 +1,5 @@
 """
-Basketball Feature Computer — orchestrator replacing StatHandlerV2.
+Basketball Feature Computer — primary orchestrator for regular stat features.
 
 Uses sportscore's StatEngine for standard stats and dispatches custom stats
 to handler functions registered in custom_stats.py.
@@ -28,14 +28,14 @@ from bball.features.parser import parse_feature_name
 
 
 class BasketballFeatureComputer:
-    """Replaces StatHandlerV2 for regular feature computation.
+    """Primary orchestrator for regular feature computation.
 
     PER and injury features remain handled externally by
     SharedFeatureGenerator (bulk computation via PERCalculator
-    and StatHandlerV2.get_injury_features).
+    and InjuryFeatureCalculator).
     """
 
-    def __init__(self, db=None, league=None):
+    def __init__(self, db=None, league=None, recency_alpha=0.0):
         self.db = db
         self.league = league
 
@@ -43,7 +43,7 @@ class BasketballFeatureComputer:
         self.engine = StatEngine(
             stat_definitions=FeatureRegistry.STAT_DEFINITIONS,
             custom_handlers=CUSTOM_HANDLERS,
-            recency_alpha=0.0,
+            recency_alpha=recency_alpha,
             recency_mode="date",
         )
 

@@ -59,9 +59,9 @@ class TestPlayerInjuryFeatures:
         assert len(missing) == 0, f"Registry features not found in calculator output: {missing}"
 
     def test_registry_injury_features_match_calculator(self):
-        """Verify registry injury features match what StatHandlerV2 returns."""
+        """Verify registry injury features match what InjuryFeatureCalculator returns."""
         from bball.features.registry import FeatureGroups
-        from bball.stats.handler import StatHandlerV2
+        from bball.features.injury import InjuryFeatureCalculator
         from bball.stats.per_calculator import PERCalculator
 
         # Get features from registry
@@ -78,17 +78,14 @@ class TestPlayerInjuryFeatures:
         date_parts = game['date'].split('-')
         year, month, day = int(date_parts[0]), int(date_parts[1]), int(date_parts[2])
 
-        # Get features from calculator
-        stat_handler = StatHandlerV2(
-            statistics=[],
-            use_exponential_weighting=False,
+        # Get features from InjuryFeatureCalculator
+        calculator = InjuryFeatureCalculator(
             db=self.db,
-            lazy_load=True,
             league=self.league
         )
         per_calc = PERCalculator(self.db, preload=False, league=self.league)
 
-        result = stat_handler.get_injury_features(
+        result = calculator.get_injury_features(
             game['homeTeam']['name'],
             game['awayTeam']['name'],
             game['season'],
@@ -127,7 +124,7 @@ class TestPlayerInjuryFeatures:
 
     def test_injury_features_have_nonzero_values(self):
         """Verify injury features calculate to non-zero values for games with injuries."""
-        from bball.stats.handler import StatHandlerV2
+        from bball.features.injury import InjuryFeatureCalculator
         from bball.stats.per_calculator import PERCalculator
 
         # Get a game with injuries
@@ -141,16 +138,13 @@ class TestPlayerInjuryFeatures:
         date_parts = game['date'].split('-')
         year, month, day = int(date_parts[0]), int(date_parts[1]), int(date_parts[2])
 
-        stat_handler = StatHandlerV2(
-            statistics=[],
-            use_exponential_weighting=False,
+        calculator = InjuryFeatureCalculator(
             db=self.db,
-            lazy_load=True,
             league=self.league
         )
         per_calc = PERCalculator(self.db, preload=False, league=self.league)
 
-        result = stat_handler.get_injury_features(
+        result = calculator.get_injury_features(
             game['homeTeam']['name'],
             game['awayTeam']['name'],
             game['season'],
@@ -170,7 +164,7 @@ class TestPlayerInjuryFeatures:
         """Verify get_all_possible_features returns features that calculators generate."""
         from bball.services.training_data import get_all_possible_features
         from bball.stats.per_calculator import PERCalculator
-        from bball.stats.handler import StatHandlerV2
+        from bball.features.injury import InjuryFeatureCalculator
 
         all_features = get_all_possible_features(no_player=False)
         requested_player = [f for f in all_features if f.startswith('player_')]
@@ -192,16 +186,13 @@ class TestPlayerInjuryFeatures:
 
         # Get actual features from calculators
         per_calc = PERCalculator(self.db, preload=False, league=self.league)
-        stat_handler = StatHandlerV2(
-            statistics=[],
-            use_exponential_weighting=False,
+        calculator = InjuryFeatureCalculator(
             db=self.db,
-            lazy_load=True,
             league=self.league
         )
 
         per_result = per_calc.get_game_per_features(home, away, season, game['date'])
-        inj_result = stat_handler.get_injury_features(
+        inj_result = calculator.get_injury_features(
             home, away, season, year, month, day,
             game_doc=game,
             per_calculator=per_calc

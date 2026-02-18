@@ -79,7 +79,8 @@ class SharedFeatureContext:
             preload_data: If True, preload games and player stats into memory
         """
         from bball.mongo import Mongo
-        from bball.stats.handler import StatHandlerV2
+        from bball.features.compute import BasketballFeatureComputer
+        from bball.features.injury import InjuryFeatureCalculator
         from bball.stats.per_calculator import PERCalculator
         from bball.data import GamesRepository, RostersRepository
         from bball.utils.collection import import_collection
@@ -133,22 +134,25 @@ class SharedFeatureContext:
             self.all_games = import_collection('stats_nba')
             print("Loaded game data.")
 
-        # Initialize stat handler with preloaded games
-        print("Initializing shared stat handler...")
-        self.stat_handler = StatHandlerV2(
-            statistics=[],
-            use_exponential_weighting=False,
-            preloaded_games=self.all_games,
-            db=self.db,
-            lazy_load=(not preload_data)
-        )
+        # Initialize feature computer with preloaded games
+        print("Initializing shared feature computer...")
+        self._computer = BasketballFeatureComputer(db=self.db)
+        if self.all_games:
+            games_home, games_away = self.all_games
+            self._computer.set_preloaded_data(games_home, games_away)
 
         # Preload venue cache
         print("Preloading venue cache...")
         try:
-            self.stat_handler.preload_venue_cache()
+            self._computer.preload_venue_cache()
         except Exception:
             pass
+
+        # Initialize injury calculator
+        self._injury_calculator = InjuryFeatureCalculator(db=self.db)
+        if self.all_games:
+            games_home, games_away = self.all_games
+            self._injury_calculator.set_preloaded_data(games_home, games_away)
 
         # Initialize PER calculator if needed
         self.per_calculator = None
@@ -166,9 +170,9 @@ class SharedFeatureContext:
                 for date_data in season_data.values():
                     for game in date_data.values():
                         games_list.append(game)
-            self.stat_handler.preload_injury_cache(games_list)
+            self._injury_calculator.preload_injury_cache(games_list)
 
-        # Season severity uses lazy caching in stat_handler._get_season_injury_severity()
+        # Season severity uses lazy caching in injury_calculator._get_season_injury_severity()
         # The cache is shared across all threads, so first call computes, subsequent calls hit cache
         # This is more efficient than pre-computing 40K+ combinations upfront
         self._precomputed_season_severity = {}
@@ -298,15 +302,27 @@ class SharedFeatureContext:
             if feature_name.startswith('inj_'):
                 continue
 
-            # Regular stat feature - use shared stat handler
+            # Regular stat feature - collect for batch computation
+            pass  # Will be computed in batch below
+
+        # Batch compute all regular features at once
+        regular_features = [
+            f for f in self.feature_names
+            if '|' in f
+            and not f.startswith('player_')
+            and not f.startswith('per_available')
+            and not f.startswith('inj_')
+        ]
+        if regular_features:
             try:
-                value = self.stat_handler.calculate_feature(
-                    feature_name, home_team, away_team, season,
-                    year, month, day, self.per_calculator, venue_guid
+                regular_results = self._computer.compute_matchup_features(
+                    regular_features, home_team, away_team, season,
+                    game_date_str, venue_guid=venue_guid,
                 )
-                features_dict[feature_name] = value if value is not None else 0.0
+                features_dict.update(regular_results)
             except Exception:
-                features_dict[feature_name] = 0.0
+                for fname in regular_features:
+                    features_dict.setdefault(fname, 0.0)
 
         # Add PER features if needed
         has_per_features = any(
@@ -363,13 +379,13 @@ class SharedFeatureContext:
             # ONE-TIME VERIFICATION: Print cache state on first call
             if not hasattr(self, '_cache_verified'):
                 self._cache_verified = True
-                sh = self.stat_handler
+                ic = self._injury_calculator
                 print(f"\n[CACHE VERIFICATION]")
-                print(f"  stat_handler.games_home is set: {sh.games_home is not None}")
-                print(f"  stat_handler.games_away is set: {sh.games_away is not None}")
-                print(f"  stat_handler._injury_cache_loaded: {getattr(sh, '_injury_cache_loaded', 'NOT SET')}")
-                inj_cache = getattr(sh, '_injury_preloaded_players', {})
-                print(f"  stat_handler._injury_preloaded_players count: {len(inj_cache)}")
+                print(f"  injury_calculator.games_home is set: {ic.games_home is not None}")
+                print(f"  injury_calculator.games_away is set: {ic.games_away is not None}")
+                print(f"  injury_calculator._injury_cache_loaded: {getattr(ic, '_injury_cache_loaded', 'NOT SET')}")
+                inj_cache = getattr(ic, '_injury_preloaded_players', {})
+                print(f"  injury_calculator._injury_preloaded_players count: {len(inj_cache)}")
                 if self.per_calculator:
                     pc = self.per_calculator
                     print(f"  per_calculator._preloaded: {getattr(pc, '_preloaded', 'NOT SET')}")
@@ -407,12 +423,12 @@ class SharedFeatureContext:
                         pass
 
                 # Pass precomputed_season_severity dict even if empty - lazy caching happens inside
-                # stat_handler._get_season_injury_severity() and uses its own cache
-                injury_features = self.stat_handler.get_injury_features(
+                # injury_calculator._get_season_injury_severity() and uses its own cache
+                injury_features = self._injury_calculator.get_injury_features(
                     home_team, away_team, season, year, month, day,
                     game_doc=game_doc,
                     per_calculator=self.per_calculator,
-                    precomputed_season_severity=None  # Let stat_handler use its internal lazy cache
+                    precomputed_season_severity=None  # Let injury_calculator use its internal lazy cache
                 )
                 if injury_features:
                     for fname in self.feature_names:
