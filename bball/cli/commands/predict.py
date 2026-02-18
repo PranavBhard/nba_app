@@ -28,7 +28,7 @@ Examples:
         service = PredictionService(db=db, league=league)
 
         if args.home and args.away:
-            result = service.predict_game(
+            result = service.predict_matchup(
                 home_team=args.home,
                 away_team=args.away,
                 game_date=args.date,

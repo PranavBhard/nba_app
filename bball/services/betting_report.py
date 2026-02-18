@@ -5,157 +5,18 @@ Compares model predictions against Kalshi market odds and recommends stakes
 using a Kelly Criterion-based approach with confidence adjustments.
 """
 
-from dataclasses import dataclass, asdict
-from datetime import datetime, date
-from typing import List, Dict, Any, Optional, TYPE_CHECKING
+from datetime import datetime
+from typing import List, Dict, Optional, TYPE_CHECKING
 
-from pytz import timezone
+from sportscore.services.betting_report import (
+    BetRecommendation,
+    prob_to_american_odds,
+    format_time_for_report,
+    calculate_stake,
+)
 
 if TYPE_CHECKING:
     from bball.league_config import LeagueConfig
-
-
-@dataclass
-class BetRecommendation:
-    """A single betting recommendation."""
-    game_id: str
-    game_time: datetime  # UTC
-    game_time_formatted: str  # "0700PM" format
-    team: str  # Team abbreviation (predicted winner)
-    home_team: str  # Home team abbreviation
-    away_team: str  # Away team abbreviation
-    market_prob: float  # 0.0-1.0
-    market_odds: int  # American odds
-    model_prob: float  # 0.0-1.0
-    model_odds: int  # American odds
-    edge: float  # p_model - p_market
-    edge_kelly: float  # Kelly edge
-    dog_variance_penalty: float  # Underdog probability coefficient
-    stake_fraction: float  # Fraction of bankroll
-    stake: float  # Actual stake amount
-    adjusted_stake: float  # Adjusted stake with probability-based confidence
-    market_status: str  # Kalshi market status: "active", "closed", "settled", etc.
-
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert to JSON-serializable dict."""
-        result = asdict(self)
-        # Convert datetime to ISO string
-        if isinstance(result['game_time'], datetime):
-            result['game_time'] = result['game_time'].isoformat()
-        return result
-
-
-def _prob_to_american_odds(prob: float) -> int:
-    """
-    Convert probability (0.0-1.0) to American odds.
-
-    Examples:
-        0.60 -> -150 (60% favorite)
-        0.40 -> +150 (40% underdog)
-        0.50 -> -100 (even)
-    """
-    if prob <= 0:
-        return 0
-    if prob >= 1:
-        return -10000
-    if prob >= 0.5:
-        return int(-100 * prob / (1 - prob))
-    else:
-        return int(100 * (1 - prob) / prob)
-
-
-def _format_time_for_report(dt: datetime) -> str:
-    """
-    Format datetime as '0700PM' in Eastern time.
-
-    Args:
-        dt: datetime object (assumed UTC if naive)
-
-    Returns:
-        String like "0700PM" or "1030PM"
-    """
-    if dt is None:
-        return "TBD"
-
-    eastern = timezone('US/Eastern')
-
-    # If datetime is naive, assume it's UTC
-    if dt.tzinfo is None:
-        from pytz import utc
-        dt = utc.localize(dt)
-
-    et_time = dt.astimezone(eastern)
-    return et_time.strftime('%I%M%p').upper()
-
-
-def _calculate_stake(
-    p_model: float,
-    p_market: float,
-    brier_score: float,
-    bankroll: float
-) -> Dict[str, float]:
-    """
-    Calculate recommended stake using Kelly Criterion with adjustments.
-
-    Args:
-        p_model: Model probability (0.0-1.0)
-        p_market: Market probability (0.0-1.0)
-        brier_score: Model's Brier score (lower is better)
-        bankroll: Total bankroll amount
-
-    Returns:
-        Dict with edge_kelly, kelly_fraction, confidence, dog_variance_penalty,
-        stake_fraction, stake, adjusted_confidence, adjusted_stake_fraction, adjusted_stake
-    """
-    # Market odds in decimal format
-    market_odds_decimal = 1 / p_market if p_market > 0 else 100
-
-    # Kelly edge calculation
-    # edge_kelly = (p_model * odds - 1) / (odds - 1)
-    if market_odds_decimal <= 1:
-        edge_kelly = 0
-    else:
-        edge_kelly = (p_model * market_odds_decimal - 1) / (market_odds_decimal - 1)
-
-    # Quarter Kelly for conservative sizing
-    kelly_fraction = 0.25
-
-    # Confidence adjustment based on Brier score
-    # Brier of 0.25 is random guessing, lower is better
-    # Clamp between 0.3 and 1.0
-    raw_confidence = 1 - brier_score / 0.25
-    confidence = max(0.3, min(1.0, raw_confidence))
-
-    # Underdog variance penalty - reduces stake for heavy underdogs
-    # Full stake if p_model >= 0.30, scaled down linearly below that
-    dog_variance_penalty = min(1.0, p_model / 0.30)
-
-    # Final stake calculation
-    stake_fraction = max(0, edge_kelly * kelly_fraction * confidence * dog_variance_penalty)
-    stake = bankroll * stake_fraction
-
-    # Adjusted confidence calculation (probability-weighted)
-    # confidence_base is the same as raw confidence
-    confidence_base = max(0.3, min(1.0, raw_confidence))
-    # mult scales based on model probability (higher prob = more confident)
-    mult = max(0.5, min(1.2, p_model / 0.5))
-    adjusted_confidence = max(0.3, min(1.0, confidence_base * mult))
-
-    # Adjusted stake calculation
-    adjusted_stake_fraction = max(0, edge_kelly * kelly_fraction * adjusted_confidence * dog_variance_penalty)
-    adjusted_stake = bankroll * adjusted_stake_fraction
-
-    return {
-        'edge_kelly': edge_kelly,
-        'kelly_fraction': kelly_fraction,
-        'confidence': confidence,
-        'dog_variance_penalty': dog_variance_penalty,
-        'stake_fraction': stake_fraction,
-        'stake': stake,
-        'adjusted_confidence': adjusted_confidence,
-        'adjusted_stake_fraction': adjusted_stake_fraction,
-        'adjusted_stake': adjusted_stake
-    }
 
 
 def generate_betting_report(
@@ -271,7 +132,7 @@ def generate_betting_report(
                     gametime = datetime.fromisoformat(gametime.replace('Z', '+00:00'))
                 except ValueError:
                     gametime = None
-        gametime_formatted = _format_time_for_report(gametime) if gametime else "TBD"
+        gametime_formatted = format_time_for_report(gametime) if gametime else "TBD"
 
         home_edge = model_home_prob - market_home_prob
         away_edge = model_away_prob - market_away_prob
@@ -279,7 +140,7 @@ def generate_betting_report(
 
         # Check home team edge
         if home_edge >= edge_threshold and market_home_prob > 0:
-            stake_info = _calculate_stake(model_home_prob, market_home_prob, brier_score, bankroll)
+            stake_info = calculate_stake(model_home_prob, market_home_prob, brier_score, bankroll)
 
             recommendations.append(BetRecommendation(
                 game_id=game_id,
@@ -289,9 +150,9 @@ def generate_betting_report(
                 home_team=home_team,
                 away_team=away_team,
                 market_prob=market_home_prob,
-                market_odds=_prob_to_american_odds(market_home_prob),
+                market_odds=prob_to_american_odds(market_home_prob),
                 model_prob=model_home_prob,
-                model_odds=_prob_to_american_odds(model_home_prob),
+                model_odds=prob_to_american_odds(model_home_prob),
                 edge=home_edge,
                 edge_kelly=stake_info['edge_kelly'],
                 dog_variance_penalty=stake_info['dog_variance_penalty'],
@@ -304,7 +165,7 @@ def generate_betting_report(
 
         # Check away team edge
         if away_edge >= edge_threshold and market_away_prob > 0:
-            stake_info = _calculate_stake(model_away_prob, market_away_prob, brier_score, bankroll)
+            stake_info = calculate_stake(model_away_prob, market_away_prob, brier_score, bankroll)
 
             recommendations.append(BetRecommendation(
                 game_id=game_id,
@@ -314,9 +175,9 @@ def generate_betting_report(
                 home_team=home_team,
                 away_team=away_team,
                 market_prob=market_away_prob,
-                market_odds=_prob_to_american_odds(market_away_prob),
+                market_odds=prob_to_american_odds(market_away_prob),
                 model_prob=model_away_prob,
-                model_odds=_prob_to_american_odds(model_away_prob),
+                model_odds=prob_to_american_odds(model_away_prob),
                 edge=away_edge,
                 edge_kelly=stake_info['edge_kelly'],
                 dog_variance_penalty=stake_info['dog_variance_penalty'],
@@ -339,7 +200,7 @@ def generate_betting_report(
             else:
                 continue
 
-            stake_info = _calculate_stake(best_prob, best_mkt, brier_score, bankroll)
+            stake_info = calculate_stake(best_prob, best_mkt, brier_score, bankroll)
             recommendations.append(BetRecommendation(
                 game_id=game_id,
                 game_time=gametime,
@@ -348,9 +209,9 @@ def generate_betting_report(
                 home_team=home_team,
                 away_team=away_team,
                 market_prob=best_mkt,
-                market_odds=_prob_to_american_odds(best_mkt),
+                market_odds=prob_to_american_odds(best_mkt),
                 model_prob=best_prob,
-                model_odds=_prob_to_american_odds(best_prob),
+                model_odds=prob_to_american_odds(best_prob),
                 edge=best_edge,
                 edge_kelly=stake_info['edge_kelly'],
                 dog_variance_penalty=stake_info['dog_variance_penalty'],

@@ -28,11 +28,7 @@ import numpy as np
 import pandas as pd
 from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import train_test_split, TimeSeriesSplit, GridSearchCV
-from sklearn.linear_model import LogisticRegression, LinearRegression
-from sklearn.ensemble import GradientBoostingClassifier, RandomForestClassifier, GradientBoostingRegressor
-from sklearn.naive_bayes import GaussianNB
-from sklearn.neural_network import MLPClassifier
-from sklearn.svm import SVC
+from sklearn.ensemble import GradientBoostingClassifier
 from sklearn.metrics import accuracy_score, mean_squared_error, log_loss, brier_score_loss
 from sklearn.feature_selection import SelectKBest, f_classif
 from sklearn.calibration import CalibratedClassifierCV
@@ -53,6 +49,8 @@ from bball.stats.league_cache import (
 from bball.stats.per_calculator import PERCalculator
 from bball.features.parser import parse_feature_name
 from bball.features.registry import FeatureRegistry
+from sportscore.training.model_factory import create_model_with_c
+from sportscore.training.model_evaluation import compute_feature_importance
 
 
 class BballModel:
@@ -84,16 +82,6 @@ class BballModel:
         'awayTeam.points': {'$gt': 0},
         'game_type': {'$nin': ['preseason', 'allstar']},
         'season': {'$exists': True}  # Just require season field exists
-    }
-    
-    # Available ML models for classification
-    CLASSIFIERS = {
-        'LogisticRegression': LogisticRegression(max_iter=10000, random_state=42),
-        'RandomForest': RandomForestClassifier(n_estimators=100, random_state=42),
-        'GradientBoosting': GradientBoostingClassifier(n_estimators=100, random_state=42),
-        'SVM': SVC(probability=True, random_state=42),
-        'NaiveBayes': GaussianNB(),
-        'NeuralNetwork': MLPClassifier(max_iter=10000, random_state=42)
     }
     
     # GBM hyperparameter grid for tuning
@@ -1616,13 +1604,13 @@ class BballModel:
             
             print(f"\nTime-based split: {split_idx} train, {len(X) - split_idx} test")
             
-            for name, model in self.CLASSIFIERS.items():
-                # Create fresh model instance
-                model_instance = type(model)(**model.get_params())
+            _MODEL_TYPES = ['LogisticRegression', 'RandomForest', 'GradientBoosting', 'SVM', 'NaiveBayes', 'NeuralNetwork']
+            for name in _MODEL_TYPES:
+                model_instance = create_model_with_c(name)
                 model_instance.fit(X_train, y_train)
                 preds = model_instance.predict(X_test)
                 acc = 100 * accuracy_score(y_test, preds)
-                
+
                 # Also compute log loss and Brier score
                 if hasattr(model_instance, 'predict_proba'):
                     proba = model_instance.predict_proba(X_test)[:, 1]
@@ -1631,18 +1619,18 @@ class BballModel:
                     print(f"  {name}: {acc:.2f}% | Log Loss: {ll:.4f} | Brier: {brier:.4f}")
                 else:
                     print(f"  {name}: {acc:.2f}%")
-                
+
                 results[name].append(acc)
         else:
             # Random splits with multiple runs
+            _MODEL_TYPES = ['LogisticRegression', 'RandomForest', 'GradientBoosting', 'SVM', 'NaiveBayes', 'NeuralNetwork']
             for run in range(n_runs):
                 X_train, X_test, y_train, y_test = train_test_split(
                     X, y, test_size=test_size, random_state=run
                 )
-                
-                for name, model in self.CLASSIFIERS.items():
-                    # Create fresh model instance
-                    model_instance = type(model)(**model.get_params())
+
+                for name in _MODEL_TYPES:
+                    model_instance = create_model_with_c(name)
                     model_instance.fit(X_train, y_train)
                     preds = model_instance.predict(X_test)
                     acc = 100 * accuracy_score(y_test, preds)
@@ -1698,7 +1686,7 @@ class BballModel:
             y_train, y_test = y[train_idx], y[test_idx]
             
             # Train model
-            model = type(self.CLASSIFIERS[model_type])(**self.CLASSIFIERS[model_type].get_params())
+            model = create_model_with_c(model_type)
             model.fit(X_train, y_train)
             
             # Evaluate
@@ -1871,9 +1859,9 @@ class BballModel:
         
         model.fit(X, y)
         
-        # Get importance
-        importances = list(zip(feature_cols, model.feature_importances_))
-        importances.sort(key=lambda x: x[1], reverse=True)
+        # Get importance via shared utility
+        importance_dict = compute_feature_importance(model, feature_cols, 'GradientBoosting')
+        importances = sorted(importance_dict.items(), key=lambda x: x[1], reverse=True)
         
         print("\nGBM Feature Importance (Gain):")
         print("-" * 50)
@@ -1895,7 +1883,7 @@ class BballModel:
         
         Args:
             csv_path: Path to classifier CSV
-            model_type: Name of classifier to use (from CLASSIFIERS)
+            model_type: Name of classifier to use (e.g., 'LogisticRegression', 'GradientBoosting')
             standardize: If True, fit a StandardScaler
             calibrate: If True, apply probability calibration (Phase 4.3)
             use_tuned_params: If True and model_type is GradientBoosting, use tuned params
@@ -1920,18 +1908,12 @@ class BballModel:
             self.scaler = StandardScaler()
             X = self.scaler.fit_transform(X)
         
-        # Select model
-        if model_type not in self.CLASSIFIERS:
-            raise ValueError(f"Unknown model type: {model_type}. Choose from {list(self.CLASSIFIERS.keys())}")
-        
         # Use tuned params for GBM if available
         if model_type == 'GradientBoosting' and use_tuned_params and self.best_params:
             self.classifier_model = GradientBoostingClassifier(**self.best_params, random_state=42)
             print(f"Using tuned parameters: {self.best_params}")
         else:
-            self.classifier_model = type(self.CLASSIFIERS[model_type])(
-                **self.CLASSIFIERS[model_type].get_params()
-            )
+            self.classifier_model = create_model_with_c(model_type)
         
         # Train classifier
         self.classifier_model.fit(X, y)
@@ -1985,7 +1967,6 @@ class BballModel:
         import json
         import os
         from bball.training.cache_utils import load_model_cache
-        from bball.training.model_factory import create_model_with_c
         
         # Load cache
         cache = load_model_cache(no_per=no_per)
@@ -2969,7 +2950,7 @@ class BballModel:
                 continue
             
             # Train and evaluate
-            model = type(self.CLASSIFIERS[model_type])(**self.CLASSIFIERS[model_type].get_params())
+            model = create_model_with_c(model_type)
             model.fit(X_train, y_train)
             
             preds = model.predict(X_test)
@@ -3043,7 +3024,7 @@ class BballModel:
         y_train = train_df[target_col].values
         
         # Train model
-        model = type(self.CLASSIFIERS[model_type])(**self.CLASSIFIERS[model_type].get_params())
+        model = create_model_with_c(model_type)
         model.fit(X_train, y_train)
         
         results = {}

@@ -173,21 +173,21 @@ def test_predict_game():
     config = service.config_manager.get_selected_config()
     if config is None:
         print("\n  SKIP: No selected classifier config - cannot test prediction")
-        results.append(('predict_game', True))  # Not a failure, just no config
+        results.append(('predict_matchup', True))  # Not a failure, just no config
         return results
 
     # Test 1: Predict a historical game
-    print("\n  1. Testing predict_game() for LAL vs BOS...")
+    print("\n  1. Testing predict_matchup() for LAL vs BOS...")
     try:
-        result = service.predict_game(
+        result = service.predict_matchup(
             home_team='Los Angeles Lakers',
             away_team='Boston Celtics',
             game_date='2024-01-15'
         )
 
         if result is None:
-            print("     SKIP: predict_game returned None (may need model artifacts)")
-            results.append(('predict_game', True))  # Not necessarily a failure
+            print("     SKIP: predict_matchup returned None (may need model artifacts)")
+            results.append(('predict_matchup', True))  # Not necessarily a failure
         else:
             is_valid = hasattr(result, 'home_win_prob') and result.error is None
             status = "PASS" if is_valid else "FAIL"
@@ -197,12 +197,12 @@ def test_predict_game():
                 print(f"     Predicted Winner: {result.predicted_winner}")
             elif result.error:
                 print(f"     Error: {result.error}")
-            results.append(('predict_game', is_valid))
+            results.append(('predict_matchup', is_valid))
     except Exception as e:
-        print(f"     FAIL: predict_game failed: {e}")
+        print(f"     FAIL: predict_matchup failed: {e}")
         import traceback
         traceback.print_exc()
-        results.append(('predict_game', False))
+        results.append(('predict_matchup', False))
 
     return results
 

@@ -81,7 +81,7 @@ def ensure_shared_context_baseline(
 
     if not prediction_info and home_abbrev and away_abbrev and game_date:
         # Compute + persist
-        result = service.predict_game(home_team=home_abbrev, away_team=away_abbrev, game_date=game_date)
+        result = service.predict_matchup(home_team=home_abbrev, away_team=away_abbrev, game_date=game_date)
         # best-effort save (prediction doc contains rich info used by agents)
         date_obj = _parse_date_yyyy_mm_dd(game_date)
         if date_obj:

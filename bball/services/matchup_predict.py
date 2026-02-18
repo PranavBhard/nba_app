@@ -4,7 +4,7 @@ Matchup Predict Tool - Generate predictions for NBA matchups
 This tool uses PredictionService (core/prediction_service.py) as the Single Source of Truth.
 It works standalone (e.g., from agent processes) without needing the Flask app running.
 
-NOTE: The predict() function delegates to PredictionService.predict_game().
+NOTE: The predict() function delegates to PredictionService.predict_matchup().
 Helper functions (load_model_from_config, load_points_model) are kept for backward
 compatibility but are deprecated - use PredictionService directly instead.
 """
@@ -209,7 +209,7 @@ def predict(
     """
     Generate prediction for a matchup.
 
-    Delegates to PredictionService.predict_game() (core/prediction_service.py).
+    Delegates to PredictionService.predict_matchup() (core/prediction_service.py).
 
     Args:
         home: Home team abbreviation (e.g., 'LAL')
@@ -254,7 +254,7 @@ def predict(
     # Use PredictionService (SSoT for all prediction workflows)
     # Rosters are the single source of truth for player lists
     service = PredictionService(db=db, league=league)
-    result = service.predict_game(
+    result = service.predict_matchup(
         home_team=home,
         away_team=away,
         game_date=game_date,

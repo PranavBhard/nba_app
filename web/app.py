@@ -3190,7 +3190,7 @@ def predict(league_id=None):
         service = PredictionService(db=db, league=league)
 
         # Make prediction
-        result = service.predict_game(
+        result = service.predict_matchup(
             home_team=home_team,
             away_team=away_team,
             game_date=game_date_str,

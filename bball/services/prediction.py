@@ -13,7 +13,7 @@ Usage:
     service = PredictionService()
 
     # Single game prediction (rosters are the source of truth for player lists)
-    result = service.predict_game(
+    result = service.predict_matchup(
         home_team='LAL',
         away_team='BOS',
         game_date='2024-03-15'
@@ -38,6 +38,8 @@ from bball.services.config_manager import ModelConfigManager
 from bball.models.artifact_loader import ArtifactLoader
 from bball.data import GamesRepository, ClassifierConfigRepository, PointsConfigRepository
 from bball.market.kalshi import get_team_abbrev_map
+from sportscore.services.base_prediction import BasePredictionContext, BasePredictionService
+from sportscore.services.betting_report import prob_to_american_odds
 from collections import defaultdict
 import time
 
@@ -45,7 +47,7 @@ if TYPE_CHECKING:
     from bball.league_config import LeagueConfig
 
 
-class PredictionContext:
+class PredictionContext(BasePredictionContext):
     """
     Scoped preload context for predictions.
 
@@ -81,18 +83,15 @@ class PredictionContext:
                 When provided, only games and player stats for these teams
                 are loaded (much faster for single-game predictions).
         """
+        super().__init__(season=season)
         self.db = db
-        self.season = season
         self.include_previous_season = include_previous_season
         self.league = league
         self.teams = teams
 
-        # Preloaded caches (same structure as BasketballFeatureComputer/PERCalculator expect)
-        self.games_home = {}   # {season: {date: {team: game_doc}}}
-        self.games_away = {}   # {season: {date: {team: game_doc}}}
+        # Basketball-specific caches
         self.player_stats = defaultdict(list)  # {(team, season): [player_game_records]}
         self.player_stats_by_player = defaultdict(list)  # {(player_id, season): [player_game_records]} - for cross-team aggregation
-        self.venue_cache = {}  # {venue_guid: (lat, lon)}
 
         # Stats
         self._games_loaded = 0
@@ -295,7 +294,7 @@ class MatchupInfo:
     game_date: Optional[str] = None
 
 
-class PredictionService:
+class PredictionService(BasePredictionService):
     """
     Single Source of Truth for all prediction workflows.
 
@@ -381,7 +380,28 @@ class PredictionService:
     # PUBLIC API
     # =========================================================================
 
-    def predict_game(
+    def build_context(self, league_id: str, target_date: str, **kwargs) -> PredictionContext:
+        """Build a prediction context for the given date."""
+        game_date_obj = datetime.strptime(target_date, '%Y-%m-%d').date()
+        season = self._get_season_from_date(game_date_obj)
+        return self._get_or_create_context(season)
+
+    def predict_game(self, game: Dict[str, Any], context: BasePredictionContext, **kwargs) -> Dict[str, Any]:
+        """
+        Generate a prediction for a single game (base class interface).
+
+        Unpacks the game dict and delegates to predict_matchup().
+        """
+        result = self.predict_matchup(
+            home_team=game['home_team'],
+            away_team=game['away_team'],
+            game_date=game.get('game_date', ''),
+            game_id=game.get('game_id'),
+            **kwargs,
+        )
+        return result.to_dict()
+
+    def predict_matchup(
         self,
         home_team: str,
         away_team: str,
@@ -594,7 +614,7 @@ class PredictionService:
         total_games = len(matchups)
 
         for i, matchup in enumerate(matchups):
-            result = self.predict_game(
+            result = self.predict_matchup(
                 home_team=matchup.home_team,
                 away_team=matchup.away_team,
                 game_date=game_date,
@@ -1021,16 +1041,8 @@ class PredictionService:
         return None
 
     def _calculate_odds(self, prob_percent: float) -> int:
-        """Convert probability to American odds."""
-        prob = prob_percent / 100.0
-        if prob <= 0:
-            return 0
-        if prob >= 1:
-            return -10000
-        if prob >= 0.5:
-            return int(-100 * prob / (1 - prob))
-        else:
-            return int(100 * (1 - prob) / prob)
+        """Convert probability (0-100) to American odds."""
+        return prob_to_american_odds(prob_percent / 100.0)
 
     def _build_prediction_result(
         self,
