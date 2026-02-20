@@ -908,6 +908,8 @@ class TrainingService:
                     'name': 1, 'model_type': 1, 'best_c_value': 1,
                     'accuracy': 1, 'log_loss': 1, 'brier_score': 1,
                     'min_games_played': 1, 'training_stats': 1,
+                    'features_ranked': 1, 'features_ranked_by_importance': 1,
+                    'feature_count': 1,
                 },
             ):
                 bm_id = str(bm['_id'])

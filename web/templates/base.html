@@ -303,7 +303,7 @@
                 </div>
                 <div class="league-switcher-menu">
                     {% for lg in available_leagues %}
-                    <a href="/{{ lg.id }}/" class="league-switcher-item {% if lg.id == league_id %}active{% endif %}">
+                    <a href="/{{ lg.id }}/" onclick="event.preventDefault(); switchLeague('{{ lg.id }}')" class="league-switcher-item {% if lg.id == league_id %}active{% endif %}">
                         <svg class="check-icon" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
                             <path d="M13.5 4.5L6 12L2.5 8.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
                         </svg>
@@ -365,6 +365,11 @@
     <script>
       window.LEAGUE_ID = "{{ league_id }}";
       window.LEAGUE_PREFIX = "/{{ league_id }}";
+      function switchLeague(newLeagueId) {
+        var path = window.location.pathname;
+        var newPath = path.replace(/^\/[^\/]+/, '/' + newLeagueId);
+        window.location.href = newPath + window.location.search;
+      }
       (function() {
         const _fetch = window.fetch ? window.fetch.bind(window) : null;
         if (!_fetch) return;

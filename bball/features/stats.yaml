@@ -337,41 +337,8 @@ stats:
     valid_time_periods: [last_3, last_5, season]
     valid_perspectives: [away, diff, home]
 
-  conf_wins:
-    category: derived
-    description: "Conference win percentage (wins vs same-conference opponents / total conference games)"
-    type: custom
-    handler: compute_conference
-    valid_calc_weights: [avg]
-    valid_time_periods: [season]
-    valid_perspectives: [away, diff, home]
-
-  same_conf:
-    category: derived
-    description: "Binary: 1 if both teams are in the same conference, 0 otherwise"
-    type: custom
-    handler: compute_conference
-    valid_calc_weights: [binary]
-    valid_time_periods: [none]
-    valid_perspectives: [none]
-
-  conf_gp:
-    category: derived
-    description: "Number of conference games played this season"
-    type: custom
-    handler: compute_conference
-    valid_calc_weights: [raw]
-    valid_time_periods: [season]
-    valid_perspectives: [away, diff, home]
-
-  conf_margin:
-    category: derived
-    description: "Average margin per game against same-conference opponents this season"
-    type: custom
-    handler: compute_conference
-    valid_calc_weights: [avg]
-    valid_time_periods: [season]
-    valid_perspectives: [away, diff, home]
+  # Conference stats (conf_wins, same_conf, conf_gp, conf_margin) are
+  # provided by sportscore.features.traits.conference and merged in registry.py.
 
   vegas_implied_prob:
     category: derived

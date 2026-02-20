@@ -410,6 +410,7 @@ class PredictionService(BasePredictionService):
             away_team=game['away_team'],
             game_date=game.get('game_date', ''),
             game_id=game.get('game_id'),
+            venue_guid=game.get('venue_guid'),
             **kwargs,
         )
         return result.to_dict()
@@ -423,6 +424,7 @@ class PredictionService(BasePredictionService):
         include_points: bool = True,
         classifier_config: Optional[Dict] = None,
         points_config: Optional[Dict] = None,
+        venue_guid: Optional[str] = None,
     ) -> PredictionResult:
         """
         Generate prediction for a single game.
@@ -523,8 +525,11 @@ class PredictionService(BasePredictionService):
                     if pred_margin is not None:
                         additional_features['pred_margin'] = pred_margin
 
-        # Get venue_guid from game doc for travel feature calculations
-        venue_guid = game_doc.get('venue_guid') if game_doc else None
+        # Get venue_guid for travel feature calculations
+        # Prefer explicitly passed venue_guid (from predict_date matchup),
+        # fall back to game_doc (from DB — set by web app or ESPN sync)
+        if not venue_guid and game_doc:
+            venue_guid = game_doc.get('venue_guid')
 
         # Make classifier prediction
         try:
@@ -635,6 +640,7 @@ class PredictionService(BasePredictionService):
                 include_points=include_points,
                 classifier_config=classifier_config,
                 points_config=points_config,
+                venue_guid=matchup.venue_guid,
             )
             results.append(result)
 
@@ -915,6 +921,8 @@ class PredictionService(BasePredictionService):
                 return []
 
             matchups = []
+            _venue_id_to_guid = {}   # ESPN numeric id -> UUID venue_guid
+            _espn_ids_to_resolve = set()
 
             # ESPN scoreboard API returns events at top level (not nested under sports/leagues)
             events = scoreboard.get('events', [])
@@ -944,12 +952,21 @@ class PredictionService(BasePredictionService):
                 if not home_team or not away_team:
                     continue
 
-                # Get venue info from competition or game summary
+                # Get venue info from competition
                 venue_guid = None
                 venue_info = competitions[0].get('venue', {})
-                venue_guid = venue_info.get('id')  # ESPN uses 'id' for venue
+                espn_venue_id = venue_info.get('id')
 
-                # Fallback to game summary if needed
+                # Scoreboard returns numeric ESPN venue 'id', but our venue
+                # cache is keyed by UUID 'venue_guid'. Resolve via venues
+                # collection (same approach as web app index route).
+                if espn_venue_id and espn_venue_id not in _venue_id_to_guid:
+                    _espn_ids_to_resolve.add(str(espn_venue_id))
+
+                if espn_venue_id:
+                    venue_guid = str(espn_venue_id)  # placeholder; resolved below
+
+                # Fallback to game summary if no venue at all
                 if not venue_guid:
                     game_summary = espn_client.get_game_summary(game_id)
                     if game_summary:
@@ -964,6 +981,24 @@ class PredictionService(BasePredictionService):
                     venue_guid=venue_guid,
                     game_date=game_date.strftime('%Y-%m-%d')
                 ))
+
+            # Batch-resolve ESPN numeric venue IDs to UUID venue_guids
+            if _espn_ids_to_resolve:
+                venues_coll = "nba_venues"
+                if self.league:
+                    venues_coll = self.league.collections.get("venues", venues_coll)
+                venue_docs = self.db[venues_coll].find(
+                    {'id': {'$in': list(_espn_ids_to_resolve)}},
+                    {'id': 1, 'venue_guid': 1}
+                )
+                for vdoc in venue_docs:
+                    if vdoc.get('id') and vdoc.get('venue_guid'):
+                        _venue_id_to_guid[str(vdoc['id'])] = vdoc['venue_guid']
+
+            # Replace ESPN IDs with proper venue_guids on each matchup
+            for m in matchups:
+                if m.venue_guid:
+                    m.venue_guid = _venue_id_to_guid.get(m.venue_guid, m.venue_guid)
 
             return matchups
 

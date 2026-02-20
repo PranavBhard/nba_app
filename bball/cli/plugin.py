@@ -141,3 +141,18 @@ class BasketballPlugin(SportPlugin):
     def get_db_factory(self):
         from bball.mongo import Mongo
         return lambda: Mongo().db
+
+    def get_ingestion_pipeline(self, league_id, **kwargs):
+        from bball.pipeline.full_pipeline import BasketballFullPipeline
+        return BasketballFullPipeline(
+            league_id=league_id,
+            seasons=kwargs.get("seasons"),
+            max_workers=kwargs.get("max_workers"),
+            skip_espn=kwargs.get("skip_espn", False),
+            skip_post=kwargs.get("skip_post", False),
+            dry_run=kwargs.get("dry_run", False),
+            verbose=kwargs.get("verbose", False),
+            skip_training=True,
+            skip_market_calibration=True,
+            skip_csv_registration=True,
+        )

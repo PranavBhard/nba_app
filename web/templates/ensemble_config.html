@@ -884,6 +884,74 @@
     color: #333;
     margin-bottom: 10px;
 }
+
+/* Feature importance expandable in base model cards */
+.base-model-features-section {
+    margin-top: 8px;
+}
+
+.base-model-features-toggle {
+    border: none;
+    background: none;
+    cursor: pointer;
+    padding: 4px 8px;
+    border-radius: 6px;
+    color: #667eea;
+    font-weight: 700;
+    font-size: 0.82em;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.base-model-features-toggle:hover {
+    background: rgba(102, 126, 234, 0.10);
+}
+
+.base-model-features-toggle .chev {
+    display: inline-block;
+    transition: transform 0.2s ease;
+    font-size: 0.85em;
+}
+
+.base-model-features-toggle.expanded .chev {
+    transform: rotate(180deg);
+}
+
+.base-model-features-content {
+    display: none;
+    margin-top: 6px;
+    background: #fafbff;
+    border: 1px solid #e8ecff;
+    border-radius: 6px;
+    padding: 8px 10px;
+    max-height: 280px;
+    overflow: auto;
+}
+
+.base-model-feature-item {
+    display: flex;
+    gap: 6px;
+    font-size: 0.82em;
+    padding: 2px 0;
+    font-family: 'Courier New', monospace;
+    color: #444;
+}
+
+.base-model-feature-item .rank {
+    color: #999;
+    min-width: 26px;
+    text-align: right;
+}
+
+.base-model-feature-item .name {
+    flex: 1;
+}
+
+.base-model-feature-item .score {
+    color: #667eea;
+    font-weight: 600;
+}
 </style>
 
 <script>
@@ -1130,6 +1198,41 @@ function renderEnsembles() {
     container.innerHTML = filtered.map(ensemble => renderEnsembleCard(ensemble)).join('');
 }
 
+function renderBaseModelFeatures(bm) {
+    const arr = bm.features_ranked;
+    if (!arr || !Array.isArray(arr) || arr.length === 0) return '';
+
+    const contentId = `bm-features-${bm._id}`;
+    const items = arr.map(f => {
+        const score = (f.score !== null && f.score !== undefined && typeof f.score === 'number')
+            ? f.score.toFixed(4) : '';
+        return `<div class="base-model-feature-item">
+            <span class="rank">${f.rank}.</span>
+            <span class="name">${escapeHtml(f.name)}</span>
+            ${score ? `<span class="score">${score}</span>` : ''}
+        </div>`;
+    }).join('');
+
+    return `
+        <div class="base-model-features-section">
+            <button class="base-model-features-toggle" onclick="event.stopPropagation(); toggleBaseModelFeatures(this, '${contentId}')">
+                Features (${arr.length}) <span class="chev">&#9660;</span>
+            </button>
+            <div class="base-model-features-content" id="${contentId}">
+                ${items}
+            </div>
+        </div>
+    `;
+}
+
+function toggleBaseModelFeatures(btnEl, contentId) {
+    const content = document.getElementById(contentId);
+    if (!content) return;
+    const isExpanded = window.getComputedStyle(content).display !== 'none';
+    content.style.display = isExpanded ? 'none' : 'block';
+    btnEl.classList.toggle('expanded', !isExpanded);
+}
+
 function renderEnsembleCard(ensemble) {
     const isTrained = !!ensemble.ensemble_run_id;
     const isSelected = ensemble.selected;
@@ -1160,6 +1263,7 @@ function renderEnsembleCard(ensemble) {
                 <span class="base-metric"><span class="base-metric-label">Eval:</span>${bm.training_stats.eval_games ?? 'N/A'} games</span>
             </div>
             ` : ''}
+            ${renderBaseModelFeatures(bm)}
         </div>
     `).join('') || '<div style="color: #666; font-style: italic;">Base model details not loaded</div>';
 

@@ -46,36 +46,21 @@ espn:
 
 elo:
   starting_rating: 1500
-  scale: 400
-
-  home_advantage: 65
-  neutral_site_home_advantage: 0
-
+  home_advantage: 55
+  carryover:
+    enabled: true
+    mean_rating: 1500
+    alpha: 0.70
   strategy: dynamic
   k_schedule:
-    - {max_games: 12, k: 24}
-    - {max_games: 24, k: 18}
-    - {default: 14}
-
-  use_margin: true
-  margin_multiplier:
-    type: mov_log
-    cap: 15
-    scale: 2.0
-
-  postseason:
-    enabled: true
-    home_advantage: 60
-    k_multiplier: 0.85
-
+    - {max_games: 8, k: 34}
+    - {max_games: 20, k: 26}
+    - {max_games: 32, k: 20}
+    - {default: 18}
   neutral_site:
-    enabled: true
     home_advantage: 0
-
-  offseason_regression:
-    enabled: true
-    carryover_weight: 0.80
-    to_mean_weight: 0.20
+  home_advantage_overrides:
+    playoffs: 45
 
 player_filters:
   mpg_thresh: 10

@@ -24,6 +24,14 @@ DEFAULT_GAMES_COLLECTION = 'stats_nba'
 # Backward-compatible constant used throughout this module.
 COLLECTION_NAME = DEFAULT_CACHE_COLLECTION
 
+# In-memory cache: (cache_collection, season, as_of_date) -> stats dict
+_season_stats_cache: Dict[tuple, Optional[Dict]] = {}
+
+
+def clear_season_stats_cache():
+    """Clear the in-memory season stats cache."""
+    _season_stats_cache.clear()
+
 
 def get_db():
     """Get MongoDB database connection."""
@@ -210,6 +218,8 @@ def cache_season(db, season: str, force: bool = False, as_of_date: Optional[str]
             {'$set': stats},
             upsert=True
         )
+        # Invalidate in-memory cache for this season
+        _season_stats_cache.pop((cache_coll, season, as_of_date), None)
         print(f"    Cached {stats['game_count']} games, {len(stats['team_pace'])} teams")
         print(f"    factor={stats['league_constants']['factor']:.4f}, "
               f"VOP={stats['league_constants']['VOP']:.4f}, "
@@ -248,6 +258,9 @@ def get_season_stats(season: str, db=None, as_of_date: Optional[str] = None, lea
     """
     Retrieve cached stats for a season from MongoDB.
 
+    Uses an in-memory cache to avoid repeated MongoDB queries for the same
+    season within a single process (e.g. during a prediction run).
+
     Args:
         season: Season string (e.g., '2024-2025')
         db: Optional database connection (creates new if None)
@@ -260,11 +273,19 @@ def get_season_stats(season: str, db=None, as_of_date: Optional[str] = None, lea
     league = league or load_league_config("nba")
     cache_coll = league.collections["cached_league_stats"] if league else DEFAULT_CACHE_COLLECTION
 
+    cache_key = (cache_coll, season, as_of_date)
+    if cache_key in _season_stats_cache:
+        return _season_stats_cache[cache_key]
+
     # IMPORTANT: keep a single canonical per-season doc for consumers (no as_of_date field).
     # as_of_date snapshots are stored as separate docs and only returned if explicitly requested.
     if as_of_date:
-        return db[cache_coll].find_one({'season': season, 'as_of_date': as_of_date})
-    return db[cache_coll].find_one({'season': season, 'as_of_date': {'$exists': False}})
+        result = db[cache_coll].find_one({'season': season, 'as_of_date': as_of_date})
+    else:
+        result = db[cache_coll].find_one({'season': season, 'as_of_date': {'$exists': False}})
+
+    _season_stats_cache[cache_key] = result
+    return result
 
 
 def get_previous_season(season: str) -> Optional[str]:

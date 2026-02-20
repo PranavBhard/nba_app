@@ -56,16 +56,21 @@ espn:
 
 elo:
   starting_rating: 1500
-  home_advantage: 100
-  strategy: static
-  k_factor: 20
-  # Dynamic K schedule (future):
-  # k_schedule:
-  #   - {max_games: 10, k: 35}
-  #   - {max_games: 20, k: 25}
-  #   - {default: 18}
-  # home_advantage_overrides:
-  #   tournament: 75
+  home_advantage: 75
+  carryover:
+    enabled: true
+    mean_rating: 1500
+    alpha: 0.45
+  strategy: dynamic
+  k_schedule:
+    - {max_games: 8, k: 45}
+    - {max_games: 18, k: 32}
+    - {max_games: 28, k: 24}
+    - {default: 20}
+  neutral_site:
+    home_advantage: 0
+  home_advantage_overrides:
+    tournament: 0
 
 player_filters:
   mpg_thresh: 10
@@ -187,7 +192,6 @@ market:
     UCRV: UCR        # UC Riverside
     ULL: UL          # Louisiana
     UMKC: KC         # Kansas City
-    USI: SOIN        # Southern Indiana
     UST: STMN        # St. Thomas (Minnesota)
     UTRGV: RGV       # UT Rio Grande Valley
     UWGA: WGA        # West Georgia (ESPN uses WGA)

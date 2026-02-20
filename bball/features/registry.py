@@ -26,6 +26,7 @@ from sportscore.features.base_registry import (
     BaseFeatureRegistry,
 )
 from sportscore.features.stat_loader import load_stat_definitions
+from sportscore.features.traits.conference import CONFERENCE_STAT_DEFINITIONS
 
 # Backward compatibility: FeatureGroups moved to bball.features.groups
 from bball.features.groups import FeatureGroups  # noqa: F401
@@ -64,7 +65,10 @@ class FeatureRegistry(BaseFeatureRegistry):
     # CORE STAT DEFINITIONS (loaded from stats.yaml)
     # ==========================================================================
 
-    STAT_DEFINITIONS: Dict[str, StatDefinition] = load_stat_definitions(_stats_yaml_path())
+    STAT_DEFINITIONS: Dict[str, StatDefinition] = {
+        **load_stat_definitions(_stats_yaml_path()),
+        **CONFERENCE_STAT_DEFINITIONS,
+    }
 
     # ==========================================================================
     # VALID TIME PERIODS

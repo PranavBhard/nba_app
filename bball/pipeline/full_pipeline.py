@@ -226,7 +226,7 @@ def run_post_processing(config: PipelineConfig, dry_run: bool = False):
     ):
         print("  Backfilling team conferences from ESPN groups...")
         try:
-            from bball.services.espn_sync import refresh_team_conferences
+            from sportscore.pipeline.traits.conference import refresh_team_conferences
             refresh_team_conferences(mongo.db, config.league, dry_run=dry_run)
             print("    Done.")
         except Exception as e:
@@ -512,6 +512,8 @@ class BasketballFullPipeline(BasePipeline):
                  skip_espn: bool = False, skip_post: bool = False,
                  skip_injuries: bool = False, skip_rosters: bool = False,
                  skip_training: bool = False, skip_odds: bool = False,
+                 skip_market_calibration: bool = False,
+                 skip_csv_registration: bool = False,
                  seasons: List[str] = None, max_workers: int = None,
                  dry_run: bool = False, verbose: bool = False):
         super().__init__(league_id)
@@ -523,6 +525,8 @@ class BasketballFullPipeline(BasePipeline):
         self.skip_rosters = skip_rosters
         self.skip_training = skip_training
         self.skip_odds = skip_odds
+        self.skip_market_calibration = skip_market_calibration
+        self.skip_csv_registration = skip_csv_registration
         self.seasons = seasons
         self.dry_run = dry_run
         self.verbose = verbose
@@ -551,9 +555,11 @@ class BasketballFullPipeline(BasePipeline):
                           skip_condition=lambda ctx: self.skip_training,
                           description="Master training generation"),
             StepDefinition("market_calibration", self._step_market_calibration,
+                          skip_condition=lambda ctx: self.skip_market_calibration,
                           continue_on_failure=True,
                           description="Market calibration"),
             StepDefinition("csv_registration", self._step_csv_registration,
+                          skip_condition=lambda ctx: self.skip_csv_registration,
                           description="CSV registration"),
         ]
 

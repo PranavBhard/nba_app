@@ -59,16 +59,7 @@ class BasketballLeagueConfig(BaseLeagueConfig):
             "jobs",
         ]
 
-    @property
-    def extra_feature_stats(self) -> List[str]:
-        """League-specific extra stat names from YAML config.
-
-        Basketball uses nested ``extra_features.stats`` in the YAML,
-        while the base class reads a flat ``extra_feature_stats`` key.
-        """
-        ef = self.raw.get("extra_features") or {}
-        stats = ef.get("stats", [])
-        return stats if isinstance(stats, list) else []
+    # extra_feature_stats is inherited from BaseLeagueConfig (supports nested format)
 
 
 # Backward compatibility alias — 48 files import `LeagueConfig`

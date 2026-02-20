@@ -50,16 +50,21 @@ espn:
 
 elo:
   starting_rating: 1500
-  home_advantage: 100
-  strategy: static
-  k_factor: 20
-  # Dynamic K schedule (future):
-  # k_schedule:
-  #   - {max_games: 10, k: 35}
-  #   - {max_games: 20, k: 25}
-  #   - {default: 18}
-  # home_advantage_overrides:
-  #   tournament: 75
+  home_advantage: 80
+  carryover:
+    enabled: true
+    mean_rating: 1500
+    alpha: 0.55
+  strategy: dynamic
+  k_schedule:
+    - {max_games: 8, k: 42}
+    - {max_games: 18, k: 30}
+    - {max_games: 28, k: 22}
+    - {default: 18}
+  neutral_site:
+    home_advantage: 0
+  home_advantage_overrides:
+    tournament: 0
 
 player_filters:
   mpg_thresh: 10
@@ -156,7 +161,6 @@ market:
     OKLA: OU
     PEAY: APSU
     PRE: PRES
-    QUC: QUCH
     SBON: SBU
     SCAR: SC
     SPC: SPU

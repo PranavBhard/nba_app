@@ -22,7 +22,7 @@ if project_root not in sys.path:
 
 from bball.mongo import Mongo
 from bball.league_config import load_league_config
-from bball.services.espn_sync import refresh_team_conferences
+from sportscore.pipeline.traits.conference import refresh_team_conferences
 
 
 def backfill_team_conferences(league_id: str, dry_run: bool = False):

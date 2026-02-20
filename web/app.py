@@ -782,6 +782,7 @@ def _parse_training_config(config: dict) -> dict:
         'min_games_played': min_games_played,
         'exclude_seasons': exclude_seasons,
         'point_model_id': point_model_id,
+        'config_id': config.get('config_id'),
     }
 
 
@@ -4989,7 +4990,17 @@ def _run_retrain_base_job(job_id, ensemble_id, base_model_id, league_id):
 
         update_job_progress(job_id, 60, 'Linking results to config...', league=league_config)
 
-        # 4. Link results to the same config_id
+        # 4. Build training_stats from metrics (same pattern as TrainingService.train_base_model)
+        diagnostics = result.get('diagnostics', {})
+        metrics = result.get('metrics', {})
+        training_stats = {
+            'total_games': diagnostics.get('n_samples', 0),
+            'train_games': metrics.get('train_set_size'),
+            'calibration_games': metrics.get('calibrate_set_size'),
+            'eval_games': metrics.get('eval_set_size'),
+        }
+
+        # Link results to the same config_id
         config_mgr = ModelConfigManager(db=bg_db, league=league_config)
         config_mgr.link_run_to_config(
             config_id=base_model_id,
@@ -4998,11 +5009,11 @@ def _run_retrain_base_job(job_id, ensemble_id, base_model_id, league_id):
             metrics=result.get('metrics'),
             artifacts=result.get('artifacts'),
             dataset_id=result.get('dataset_id'),
-            f_scores=result.get('diagnostics', {}).get('f_scores'),
-            feature_importances=result.get('diagnostics', {}).get('feature_importances'),
+            f_scores=diagnostics.get('f_scores'),
+            feature_importances=diagnostics.get('feature_importances'),
             features=features,
-            best_c_value=result.get('diagnostics', {}).get('best_c_value', c_value),
-            training_stats=result.get('diagnostics', {}).get('training_stats'),
+            best_c_value=diagnostics.get('best_c_value', c_value),
+            training_stats=training_stats,
         )
 
         update_job_progress(job_id, 70, 'Retraining ensemble meta-model...', league=league_config)
@@ -5937,6 +5948,19 @@ def run_training_job(job_id, parsed_config, league):
         def progress_cb(pct, msg):
             update_job_progress(job_id, pct, msg, league=league)
 
+        # When retraining a selected model, preserve its name
+        name_prefix = None
+        config_id = parsed_config.get('config_id')
+        if config_id:
+            from bson import ObjectId
+            from bball.mongo import Mongo
+            classifier_col = league.collections.get('model_config_classifier', 'nba_model_config')
+            existing = Mongo().db[classifier_col].find_one(
+                {'_id': ObjectId(config_id)}, {'name': 1}
+            )
+            if existing and existing.get('name'):
+                name_prefix = existing['name']
+
         result = service.train_model_grid(
             model_types=parsed_config['model_types'],
             c_values=parsed_config['c_values'],
@@ -5950,6 +5974,7 @@ def run_training_job(job_id, parsed_config, league):
             include_injuries=parsed_config['include_injuries'],
             exclude_seasons=parsed_config['exclude_seasons'],
             use_master=parsed_config['use_master'],
+            name_prefix=name_prefix,
             progress_callback=progress_cb,
         )
 

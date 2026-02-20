@@ -59,17 +59,21 @@ espn:
 
 elo:
   starting_rating: 1500
-  home_advantage: 100
-  # Strategy: "static" uses fixed k_factor. "dynamic" (future) uses k_schedule.
-  strategy: static
-  k_factor: 20
-  # Dynamic K schedule (not yet implemented — structure ready for future use):
-  # k_schedule:
-  #   - {max_games: 20, k: 18}
-  #   - {max_games: 50, k: 15}
-  #   - {default: 12}
-  # home_advantage_overrides:
-  #   playoffs: 80
+  home_advantage: 65
+  carryover:
+    enabled: true
+    mean_rating: 1500
+    alpha: 0.85
+  strategy: dynamic
+  k_schedule:
+    - {max_games: 10, k: 28}
+    - {max_games: 30, k: 22}
+    - {max_games: 60, k: 18}
+    - {default: 16}
+  neutral_site:
+    home_advantage: 0
+  home_advantage_overrides:
+    playoffs: 55
 
 player_filters:
   mpg_thresh: 10

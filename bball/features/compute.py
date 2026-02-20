@@ -59,6 +59,8 @@ class BasketballFeatureComputer:
         # Caches
         self._team_games_cache = {}   # (team, season, date_str) -> [game_doc]
         self._elo_cache = None
+        self._conference_cache = {}   # {team_abbrev: conference_name}
+        self._conf_teams_cache = {}   # {conference_name: set(team_abbrevs/ids)}
 
         # Exclude game types from league config
         if league:
@@ -276,8 +278,8 @@ class BasketballFeatureComputer:
             "game_doc": game_doc,
             "target_venue_guid": venue_guid,
             "exclude_game_types": self._exclude_game_types,
-            "conference_cache": {},
-            "conf_teams_cache": {},
+            "conference_cache": self._conference_cache,
+            "conf_teams_cache": self._conf_teams_cache,
         }
 
     # ------------------------------------------------------------------
@@ -366,21 +368,34 @@ class BasketballFeatureComputer:
 
         recent_tp, baseline_tp = parts
 
-        recent_feature = f"{stat_name}|{recent_tp}|{calc_weight}|{perspective}"
-        baseline_feature = f"{stat_name}|{baseline_tp}|{calc_weight}|{perspective}"
-
-        recent_val = self.engine.compute_feature(
-            recent_feature, home_team, away_team,
-            home_games, away_games, context,
+        recent_val = self._compute_sub_feature(
+            stat_name, recent_tp, calc_weight, perspective,
+            home_team, away_team, home_games, away_games, context,
         )
-        baseline_val = self.engine.compute_feature(
-            baseline_feature, home_team, away_team,
-            home_games, away_games, context,
+        baseline_val = self._compute_sub_feature(
+            stat_name, baseline_tp, calc_weight, perspective,
+            home_team, away_team, home_games, away_games, context,
         )
 
         if recent_val is not None and baseline_val is not None:
             return float(recent_val) - float(baseline_val)
         return None
+
+    def _compute_sub_feature(
+        self, stat_name, tp, calc_weight, perspective,
+        home_team, away_team, home_games, away_games, context,
+    ) -> Optional[float]:
+        """Compute a sub-feature value, routing blend: time periods correctly."""
+        if tp.startswith("blend:"):
+            return self._compute_blend(
+                stat_name, tp, calc_weight, perspective,
+                home_team, away_team, home_games, away_games, context,
+            )
+        feature = f"{stat_name}|{tp}|{calc_weight}|{perspective}"
+        return self.engine.compute_feature(
+            feature, home_team, away_team,
+            home_games, away_games, context,
+        )
 
     def _compute_blend_delta(
         self, stat_name, time_period, calc_weight, perspective,
